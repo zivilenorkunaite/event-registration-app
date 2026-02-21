@@ -3,11 +3,14 @@
 require("dotenv").config();
 
 const express = require("express");
+const compression = require("compression");
+const helmet = require("helmet");
 const { Pool } = require("pg");
 const path = require("path");
+const fs = require("fs").promises;
 const FileStorage = require("./storage");
 const {
-  generateNameTagImage,
+  generateNameTag,
   LABEL_WIDTH_PX,
   LABEL_HEIGHT_PX,
 } = require("./lib/nametag-image");
@@ -21,7 +24,9 @@ let storageType;
 
 // Check if running in a Databricks environment by checking for a specific env var
 if (process.env.DATABRICKS_APP_NAME) {
-  console.log("🚀 Running in Databricks environment, using Delta Lake storage.");
+  console.log(
+    "🚀 Running in Databricks environment, using Delta Lake storage.",
+  );
   const DeltaStorage = require("./delta-storage");
   pool = new DeltaStorage();
   storageType = "delta";
@@ -34,7 +39,9 @@ if (process.env.DATABRICKS_APP_NAME) {
     !process.env.DB_PASSWORD;
 
   if (useFileStorage) {
-    console.log("📁 Running locally, using file-based storage (no PostgreSQL credentials found).");
+    console.log(
+      "📁 Running locally, using file-based storage (no PostgreSQL credentials found).",
+    );
     pool = new FileStorage();
     storageType = "file";
   } else {
@@ -49,6 +56,25 @@ const PORT = process.env.PORT || 8000;
 // Middleware to parse JSON and URL-encoded bodies
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Security middleware: set HTTP headers to prevent common vulnerabilities
+// Configure helmet with relaxed CSP for development (allow inline scripts)
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https:"],
+        imgSrc: ["'self'", "data:"],
+        fontSrc: ["'self'", "https:", "data:"],
+      },
+    },
+  }),
+);
+
+// Middleware for response compression (gzip)
+app.use(compression());
 
 // Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, "public")));
@@ -76,10 +102,12 @@ if (storageType === "postgres") {
   });
 }
 
+// Email validation regex - compiled once at module load
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 // Simple regex for backend email validation
 const isValidEmail = (email) => {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
+  return EMAIL_REGEX.test(email);
 };
 
 // Input sanitization helper
@@ -153,11 +181,9 @@ app.post("/api/register", async (req, res) => {
         .json({ message: "Check-in successful! Welcome back." });
     }
 
-    res
-      .status(500)
-      .json({
-        error: "An error occurred while checking you in. Please try again.",
-      });
+    res.status(500).json({
+      error: "An error occurred while checking you in. Please try again.",
+    });
   }
 });
 
@@ -177,14 +203,29 @@ app.post("/api/print", async (req, res) => {
   const loc = (location || "Sydney").toString();
 
   try {
-    // Generate name tag image (80mm x 50mm landscape, 203 DPI)
-    const imageBuffer = await generateNameTagImage({
+    // Generate both SVG and PNG in a single operation (no duplicate generation)
+    const { svg: svgContent, png: imageBuffer } = await generateNameTag({
       groupName: group,
       location: loc,
       name: nameDisplay,
       company: companyVal,
     });
     const imageBase64 = imageBuffer.toString("base64");
+
+    // Generate filename with timestamp
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")
+      .slice(0, -5);
+    const baseFilename = `nametag_${nameDisplay.replace(/\s+/g, "_")}_${timestamp}`;
+    const pngFilename = `${baseFilename}.png`;
+
+    // Save PNG image
+    const imagesDir = path.join(__dirname, "data", "images");
+    await fs.mkdir(imagesDir, { recursive: true });
+    const pngPath = path.join(imagesDir, pngFilename);
+    await fs.writeFile(pngPath, imageBuffer);
+    console.log(`Saved name tag PNG: ${pngFilename}`);
 
     const serverUrl = (process.env.NIIMBOT_SERVER_URL || "").replace(/\/$/, "");
     if (!serverUrl) {

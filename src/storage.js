@@ -3,6 +3,7 @@ const path = require("path");
 
 const DATA_FILE = path.join(__dirname, "data", "registrations.json");
 const DATA_DIR = path.dirname(DATA_FILE);
+const IMAGES_DIR = path.join(__dirname, "data", "images");
 
 // Ensure data directory exists
 async function ensureDataDirectory() {
@@ -11,6 +12,23 @@ async function ensureDataDirectory() {
   } catch (error) {
     // Directory might already exist, ignore error
   }
+}
+
+// Ensure images directory exists
+async function ensureImagesDirectory() {
+  try {
+    await fs.mkdir(IMAGES_DIR, { recursive: true });
+  } catch (error) {
+    // Directory might already exist, ignore error
+  }
+}
+
+// Save SVG image to file
+async function saveNameTagImage(svgContent, filename) {
+  await ensureImagesDirectory();
+  const filepath = path.join(IMAGES_DIR, filename);
+  await fs.writeFile(filepath, svgContent, "utf8");
+  return filepath;
 }
 
 // Read all registrations from file
@@ -133,3 +151,4 @@ class FileStorage {
 }
 
 module.exports = FileStorage;
+module.exports.saveNameTagImage = saveNameTagImage;

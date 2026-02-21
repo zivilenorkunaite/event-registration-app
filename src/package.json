@@ -1,0 +1,25 @@
+{
+  "name": "event-registration-app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@databricks/sql": "^1.9.1",
+    "@mmote/niimbluelib": "0.0.1-alpha.36",
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1",
+    "pg": "^8.18.0",
+    "sharp": "^0.32.6"
+  },
+  "optionalDependencies": {
+    "@mmote/niimblue-node": "^0.0.12"
+  }
+}

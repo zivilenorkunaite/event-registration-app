@@ -1,0 +1,3 @@
+env:
+  - name: WAREHOUSE_ID
+    valueFrom: sql_warehouse

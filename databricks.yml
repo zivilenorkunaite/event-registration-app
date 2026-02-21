@@ -1,0 +1,23 @@
+# A Databricks Asset Bundle for the Event Registration App.
+bundle:
+  name: event-registration-app
+
+# Defines the application as a resource.
+# The resource key is 'apps', as per the official documentation.
+resources:
+  apps:
+    # A logical name for this app resource within the bundle.
+    event-registration-app:
+      # The user-facing name of the app in the Databricks UI.
+      name: 'event-registration-app'
+      source_code_path: ./src
+      # Runtime configuration is now specified in src/app.yaml
+
+# Defines the deployment target. It automatically includes all resources defined above.
+targets:
+  development:
+    mode: development
+    default: true
+    # For actual deployment, you would uncomment and configure your workspace host:
+    # workspace:
+    #   host: https://your-workspace.cloud.databricks.com

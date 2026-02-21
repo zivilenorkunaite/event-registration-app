@@ -22,7 +22,8 @@ const app = express();
 let pool;
 let storageType;
 
-// Check if running in a Databricks environment by checking for a specific env var
+// Check if running in a Databricks environment by checking for DATABRICKS_APP_NAME
+// which is set in app.yml when deployed as a Databricks App
 if (process.env.DATABRICKS_APP_NAME) {
   console.log(
     "🚀 Running in Databricks environment, using Delta Lake storage.",
@@ -152,7 +153,6 @@ app.post("/api/register", async (req, res) => {
     const query = `
             INSERT INTO event_registrations (first_name, last_name, company, company_email, contact_permission)
             VALUES ($1, $2, $3, $4, $5)
-            RETURNING id
         `;
     const values = [
       sanitizedFirstName,
@@ -220,12 +220,18 @@ app.post("/api/print", async (req, res) => {
     const baseFilename = `nametag_${nameDisplay.replace(/\s+/g, "_")}_${timestamp}`;
     const pngFilename = `${baseFilename}.png`;
 
-    // Save PNG image
-    const imagesDir = path.join(__dirname, "data", "images");
-    await fs.mkdir(imagesDir, { recursive: true });
-    const pngPath = path.join(imagesDir, pngFilename);
-    await fs.writeFile(pngPath, imageBuffer);
-    console.log(`Saved name tag PNG: ${pngFilename}`);
+    // Save PNG image based on storage type
+    if (storageType === "delta") {
+      // Save to Databricks UC Volume
+      await pool.savePngToVolume(imageBuffer, pngFilename);
+    } else {
+      // Save to local filesystem
+      const imagesDir = path.join(__dirname, "data", "images");
+      await fs.mkdir(imagesDir, { recursive: true });
+      const pngPath = path.join(imagesDir, pngFilename);
+      await fs.writeFile(pngPath, imageBuffer);
+      console.log(`Saved name tag PNG: ${pngFilename}`);
+    }
 
     const serverUrl = (process.env.NIIMBOT_SERVER_URL || "").replace(/\/$/, "");
     if (!serverUrl) {

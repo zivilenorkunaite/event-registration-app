@@ -2,16 +2,28 @@
 bundle:
   name: event-registration-app
 
-# Defines the application as a resource.
-# The resource key is 'apps', as per the official documentation.
+# Defines resources used by the bundle
 resources:
+  # Application resource
   apps:
     # A logical name for this app resource within the bundle.
     event-registration-app:
       # The user-facing name of the app in the Databricks UI.
-      name: 'event-registration-app'
+      name: "event-registration-app"
       source_code_path: ./src
       # Runtime configuration is now specified in src/app.yaml
+      # Resources this app requires access to
+      resources:
+        - name: "app-warehouse"
+          sql_warehouse:
+            id: d1f46fef0447bfab
+            permission: CAN_USE
+
+        - name: "app-volume"
+          uc_securable:
+            securable_full_name: main.default.name_tags
+            securable_type: VOLUME
+            permission: WRITE_VOLUME
 
 # Defines the deployment target. It automatically includes all resources defined above.
 targets:

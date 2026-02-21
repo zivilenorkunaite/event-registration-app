@@ -1,3 +1,39 @@
 env:
-  - name: WAREHOUSE_ID
-    valueFrom: sql_warehouse
+  # Databricks App name - used to detect when running in Databricks environment
+  - name: DATABRICKS_APP_NAME
+    value: event-registration
+
+  # Databricks workspace host
+  - name: DATABRICKS_HOST
+    valueFrom: "DATABRICKS_HOST"
+
+  # OAuth Client ID for Databricks authentication
+  - name: DATABRICKS_CLIENT_ID
+    valueFrom: "DATABRICKS_CLIENT_ID"
+
+  # OAuth Client Secret for Databricks authentication
+  - name: DATABRICKS_CLIENT_SECRET
+    valueFrom: "DATABRICKS_CLIENT_SECRET"
+
+  # SQL Warehouse ID for the event registrations table
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: "app-warehouse"
+
+  # Custom catalog and schema (auto-set by Databricks, override if needed)
+  - name: DATABRICKS_CATALOG
+    value: main
+
+  - name: DATABRICKS_SCHEMA
+    value: default
+
+  # UC Volume name for storing name tag images
+  - name: DATABRICKS_VOLUME_NAME
+    value: nametags
+
+  # Full UC Volume path for storing name tag images (computed from catalog/schema/volume_name)
+  - name: DATABRICKS_VOLUME_PATH
+    valueFrom: "app-volume"
+
+  # Allow email reuse in registrations (optional)
+  - name: ALLOW_EMAIL_REUSE
+    value: "true"

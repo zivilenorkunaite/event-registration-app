@@ -9,6 +9,8 @@ from typing import Optional
 print("📚 [Backend] Loading FastAPI...")
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr
 print("📚 [Backend] Loading storage modules...")
 
@@ -89,6 +91,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount static files (serve index.html and CSS/JS from public/ directory)
+import os
+public_dir = os.path.join(os.path.dirname(__file__), "..", "public")
+if os.path.isdir(public_dir):
+    print(f"📁 Mounting static files from: {public_dir}")
+    app.mount("/static", StaticFiles(directory=public_dir), name="static")
+else:
+    print(f"⚠️  Static files directory not found: {public_dir}")
 
 # Configuration
 EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -348,10 +359,14 @@ async def get_registrations(limit: Optional[int] = None):
         raise HTTPException(status_code=500, detail="Failed to fetch registrations.")
 
 
-# Root endpoint for health check
+# Root endpoint - serve index.html
 @app.get("/")
 async def root():
-    """Root endpoint."""
+    """Serve the HTML frontend."""
+    import os
+    html_file = os.path.join(os.path.dirname(__file__), "..", "public", "index.html")
+    if os.path.exists(html_file):
+        return FileResponse(html_file, media_type="text/html")
     return {"message": "Event Registration Backend API"}
 
 

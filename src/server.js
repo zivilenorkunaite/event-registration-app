@@ -58,7 +58,9 @@ app.use("/api", (req, res) => {
 
   proxyReq.on("error", (err) => {
     console.error(`[API Proxy] Error connecting to backend: ${err.message}`);
-    res.status(503).json({ error: "Backend service unavailable", details: err.message });
+    res
+      .status(503)
+      .json({ error: "Backend service unavailable", details: err.message });
   });
 
   if (req.method !== "GET" && req.method !== "HEAD") {

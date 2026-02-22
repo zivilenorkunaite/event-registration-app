@@ -18,22 +18,22 @@ env:
   - name: DATABRICKS_VOLUME_PATH
     valueFrom: "app-volume"
 
-  # Frontend server port (Databricks assigns this)
+  # Server port (exposed by Databricks Apps)
   - name: PORT
     value: "8000"
-
-  # Backend server port (internal, not exposed)
-  - name: BACKEND_PORT
-    value: "8001"
 
   # Allow email reuse in registrations (optional)
   - name: ALLOW_EMAIL_REUSE
     value: "true"
 
 # Startup command for Databricks Apps
-cmd: 
-  - npm
-  - start
+cmd:
+  - gunicorn
+  - backend.main:app
+  - "-w"
+  - "2"
+  - "--worker-class"
+  - "uvicorn.workers.UvicornWorker"
 
 # Port to expose (frontend runs on 8000)
 expose_path:
@@ -44,16 +44,12 @@ max_startup_time: 300
 
 # STARTUP PROCEDURE (Databricks App):
 # ====================================
-# This app runs TWO services:
-# 1. Node.js Frontend on port 8000 - Serves registration form static files
-# 2. Python Backend on port 8001  - Handles registrations, printing, Databricks APIs
+# This app runs a single FastAPI service:
+# - FastAPI backend on port 8000
+# - Serves registration form + API endpoints
+# - Handles registrations, printing, Databricks APIs
 #
-# Entry point: npm start → node start-all.js
-#
-# The start-all.js script will:
-# - Check/install Node.js dependencies
-# - Check/install Python dependencies (handles missing pip)
-# - Start Node.js frontend server
-# - Start Python backend server  
-# - Monitor both services for health
-# - Clean up both on shutdown
+# Entry point: gunicorn backend.main:app
+# - Uses UvicornWorker for ASGI support
+# - 2 worker processes for concurrency
+# - Automatically manages lifecycle

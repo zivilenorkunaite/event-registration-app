@@ -4,9 +4,11 @@ command:
   - "-w"
   - "2"
   - "-b"
-  - "127.0.0.1:8000"
+  - "0.0.0.0:8000"
   - "--worker-class"
   - "uvicorn.workers.UvicornWorker"
+  - "--timeout"
+  - "120"
 
 env:
   - name: DATABRICKS_WAREHOUSE_ID

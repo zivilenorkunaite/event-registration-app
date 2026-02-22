@@ -13,7 +13,7 @@ const fs = require("fs");
 
 const FRONTEND_PORT = process.env.PORT || 8000;
 const BACKEND_PORT = process.env.BACKEND_PORT || 8001;
-const STARTUP_TIMEOUT = 30000; // 30 seconds to start both services
+const STARTUP_TIMEOUT = 120000; // 120 seconds to start - pip install can take time
 
 // Store process references for cleanup
 let frontendProcess = null;
@@ -46,9 +46,9 @@ async function ensurePythonDependencies() {
     }
 
     console.log("📦 Installing Python dependencies...");
-    const pip = spawn("python3", ["-m", "pip", "install", "-q", "-r", "backend/requirements.txt"], {
+    const pip = spawn("python3", ["-m", "pip", "install", "-r", "backend/requirements.txt"], {
       cwd: __dirname,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: "inherit", // Show all output directly
     });
 
     pip.on("close", (code) => {
@@ -56,7 +56,7 @@ async function ensurePythonDependencies() {
         console.log("✅ Python dependencies installed");
         resolve();
       } else {
-        reject(new Error(`pip install failed with code ${code}`));
+        reject(new Error(`pip install failed with code ${code} - see output above`));
       }
     });
 
@@ -80,9 +80,10 @@ async function ensureNodeDependencies() {
     }
 
     console.log("📦 Installing Node.js dependencies...");
-    const npm = spawn("npm", ["install", "--quiet"], {
+    const npm = spawn("npm", ["install"], {
       cwd: __dirname,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: "inherit", // Show all output directly
+      timeout: 120000, // 2 minute timeout
     });
 
     npm.on("close", (code) => {
@@ -90,7 +91,7 @@ async function ensureNodeDependencies() {
         console.log("✅ Node.js dependencies installed");
         resolve();
       } else {
-        reject(new Error(`npm install failed with code ${code}`));
+        reject(new Error(`npm install failed with code ${code} - see output above`));
       }
     });
 

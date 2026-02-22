@@ -73,6 +73,8 @@ class DeltaStorage(StorageBase):
     async def _ensure_table_exists(self) -> None:
         """Create event_registrations table if it doesn't exist."""
         try:
+            # Note: Databricks Delta doesn't support PRIMARY KEY constraints
+            # Using BIGINT GENERATED ALWAYS AS IDENTITY for auto-incrementing ID
             create_table_sql = f"""
             CREATE TABLE IF NOT EXISTS {self.catalog}.{self.schema}.event_registrations (
                 id BIGINT GENERATED ALWAYS AS IDENTITY,
@@ -81,8 +83,7 @@ class DeltaStorage(StorageBase):
                 company STRING,
                 group_name STRING,
                 location STRING,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (id)
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
             );
             """
             
@@ -94,7 +95,7 @@ class DeltaStorage(StorageBase):
             await asyncio.to_thread(_create)
             print(f"   [DeltaStorage] ✅ Table {self.catalog}.{self.schema}.event_registrations ready")
         except Exception as e:
-            print(f"   [DeltaStorage] ❌ Failed to ensure table exists: {e}")
+            print(f"   [DeltaStorage] ❌ Failed to ensure table exists: {type(e).__name__}: {e}")
             raise
 
     async def query(self, sql_query: str, values: Optional[List[Any]] = None) -> Dict[str, Any]:

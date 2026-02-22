@@ -3,18 +3,6 @@ env:
   - name: DATABRICKS_APP_NAME
     value: event-registration
 
-  # Databricks workspace host
-  - name: DATABRICKS_HOST
-    valueFrom: "DATABRICKS_HOST"
-
-  # OAuth Client ID for Databricks authentication
-  - name: DATABRICKS_CLIENT_ID
-    valueFrom: "DATABRICKS_CLIENT_ID"
-
-  # OAuth Client Secret for Databricks authentication
-  - name: DATABRICKS_CLIENT_SECRET
-    valueFrom: "DATABRICKS_CLIENT_SECRET"
-
   # SQL Warehouse ID for the event registrations table
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: "app-warehouse"

@@ -1,6 +1,5 @@
 // src/delta-storage.js
 const { DBSQLClient } = require("@databricks/sql");
-const { VolumeClient } = require("@databricks/appkit");
 const fs = require("fs").promises;
 const path = require("path");
 
@@ -108,35 +107,92 @@ class DeltaStorage {
   }
 
   /**
-   * Saves a PNG image to the UC Volume using Databricks AppKit's VolumeClient.
-   * AppKit auto-authenticates in Databricks Apps using service principal credentials.
+   * Gets an OAuth access token using client credentials flow.
+   * @returns {Promise<string>} OAuth access token
+   */
+  async getOAuthToken() {
+    const clientId = process.env.DATABRICKS_CLIENT_ID;
+    const clientSecret = process.env.DATABRICKS_CLIENT_SECRET;
+    const host = process.env.DATABRICKS_HOST;
+
+    if (!clientId || !clientSecret || !host) {
+      throw new Error(
+        "Missing OAuth credentials (CLIENT_ID, CLIENT_SECRET, HOST)",
+      );
+    }
+
+    try {
+      const response = await fetch(`https://${host}/oidc/token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          grant_type: "client_credentials",
+          client_id: clientId,
+          client_secret: clientSecret,
+          scope: "all-apis",
+        }).toString(),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(
+          `OAuth token request failed: ${error.error_description || response.statusText}`,
+        );
+      }
+
+      const data = await response.json();
+      return data.access_token;
+    } catch (error) {
+      console.error("❌ Failed to get OAuth token:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Saves a PNG image to the UC Volume using Databricks Files REST API.
    * @param {Buffer} imageBuffer - The PNG image data as a buffer
    * @param {string} filename - The filename for the image (e.g., 'nametag_JOHN_2026-02-22T10-30-45.png')
    * @returns {Promise<string>} A promise that resolves to the UC volume path of the saved image
    */
   async savePngToVolume(imageBuffer, filename) {
+    const host = process.env.DATABRICKS_HOST;
     const volumePath = process.env.DATABRICKS_VOLUME_PATH;
 
-    if (!volumePath) {
+    if (!host || !volumePath) {
       console.warn(
-        "⚠️  DATABRICKS_VOLUME_PATH not available. Cannot upload to UC volume.",
+        "⚠️  Databricks host or volume path not available. Cannot upload to UC volume.",
       );
       return `${this.volumePath}/${filename}`;
     }
 
     try {
-      // Initialize AppKit VolumeClient (auto-authenticates in Databricks Apps)
-      const volumeClient = new VolumeClient();
+      // Get OAuth access token for API authentication
+      const accessToken = await this.getOAuthToken();
 
-      // Construct full UC volume file path
       const filePath = `${volumePath}/${filename}`;
+      const encodedPath = encodeURIComponent(filePath);
 
-      // Upload PNG buffer to UC volume using AppKit
-      await volumeClient.uploadFile({
-        path: filePath,
-        content: imageBuffer,
-        overwrite: true,
-      });
+      // Use Databricks Files API to upload PNG to UC Volume
+      const response = await fetch(
+        `https://${host}/api/2.0/fs/files/${encodedPath}`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/octet-stream",
+          },
+          body: imageBuffer,
+        },
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(
+          `Databricks Files API error: ${errorData.message || response.statusText}`,
+        );
+      }
 
       console.log(`✅ Saved name tag PNG to UC Volume: ${filename}`);
       return filePath;

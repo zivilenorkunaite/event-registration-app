@@ -1,0 +1,8 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+databricks-sql-connector
+pillow==10.1.0
+python-dotenv==1.0.0
+aiohttp==3.9.1
+httpx==0.25.2
+pydantic[email]==2.5.0

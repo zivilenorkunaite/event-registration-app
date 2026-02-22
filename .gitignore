@@ -1,8 +1,36 @@
 # Dependencies
 node_modules/
 
+# Python
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+
 # Environment variables
 .env
+.env.local
 
 # Logs
 *.log
@@ -17,9 +45,13 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
 
-# Optional: Database dumps
-*.sql.backup
+# Temporary files
+*.tmp
+*.temp
 
-# File-based storage data (optional - remove if you want to commit test data)
+# Local development data (don't commit test registrations)
 data/
+registrations.json

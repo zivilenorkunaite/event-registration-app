@@ -6,23 +6,13 @@ const compression = require("compression");
 const helmet = require("helmet");
 const path = require("path");
 const cors = require("cors");
-const httpProxy = require("http-proxy");
+const http = require("http");
 
 const app = express();
 
-// Create proxy for backend API requests
-const backendUrl = `http://localhost:${process.env.BACKEND_PORT || 8001}`;
-const proxy = httpProxy.createProxyServer({
-  target: backendUrl,
-  changeOrigin: true,
-  pathRewrite: { "^/api": "/api" }, // Keep /api prefix
-});
-
-// Handle proxy errors gracefully
-proxy.on("error", (err, req, res) => {
-  console.error("Proxy error:", err);
-  res.status(502).json({ error: "Backend service unavailable" });
-});
+// Backend configuration
+const BACKEND_PORT = process.env.BACKEND_PORT || 8001;
+const backendUrl = `http://localhost:${BACKEND_PORT}`;
 
 // Middleware
 app.use(express.json());
@@ -50,9 +40,52 @@ app.use(
 // Middleware for response compression (gzip)
 app.use(compression());
 
-// Proxy all /api requests to the Python backend
+// Simple proxy for /api requests - forward to backend
 app.use("/api", (req, res) => {
-  proxy.web(req, res);
+  const options = {
+    hostname: "localhost",
+    port: BACKEND_PORT,
+    path: req.url,
+    method: req.method,
+    headers: {
+      ...req.headers,
+      host: `localhost:${BACKEND_PORT}`,
+    },
+    timeout: 10000,
+  };
+
+  const proxyReq = http.request(options, (proxyRes) => {
+    // Copy status and headers from backend response
+    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on("error", (err) => {
+    console.error(`❌ Backend connection failed:`, err.message);
+    res.status(503).json({ 
+      error: "Backend service unavailable",
+      details: err.message 
+    });
+  });
+
+  proxyReq.on("timeout", () => {
+    console.error("❌ Backend request timeout");
+    proxyReq.destroy();
+    res.status(504).json({ error: "Backend request timeout" });
+  });
+
+  // Send request body if present
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      proxyReq.end(body);
+    });
+  } else {
+    proxyReq.end();
+  }
 });
 
 // Serve static files from the 'public' directory

@@ -95,11 +95,17 @@ app.add_middleware(
 # Mount static files (serve index.html and CSS/JS from public/ directory)
 import os
 public_dir = os.path.join(os.path.dirname(__file__), "..", "public")
-if os.path.isdir(public_dir):
-    print(f"📁 Mounting static files from: {public_dir}")
-    app.mount("/static", StaticFiles(directory=public_dir), name="static")
+public_dir_abs = os.path.abspath(public_dir)
+print(f"📁 Looking for static files at: {public_dir_abs}")
+if os.path.isdir(public_dir_abs):
+    print(f"✅ Found public directory, mounting static files")
+    try:
+        app.mount("/static", StaticFiles(directory=public_dir_abs), name="static")
+        print(f"✅ Static files mounted successfully")
+    except Exception as e:
+        print(f"⚠️  Error mounting static files: {e}")
 else:
-    print(f"⚠️  Static files directory not found: {public_dir}")
+    print(f"⚠️  Static files directory not found at: {public_dir_abs}")
 
 # Configuration
 EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -368,12 +374,3 @@ async def root():
     if os.path.exists(html_file):
         return FileResponse(html_file, media_type="text/html")
     return {"message": "Event Registration Backend API"}
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    port = int(os.getenv("BACKEND_PORT", 8001))
-    print(f"\n🚀 [Backend] Starting Uvicorn on 0.0.0.0:{port}")
-    print(f"📝 [Backend] Log level: INFO\n")
-    uvicorn.run(app, host="0.0.0.0", port=port)

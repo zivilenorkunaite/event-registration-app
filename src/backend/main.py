@@ -93,7 +93,6 @@ app.add_middleware(
 )
 
 # Mount static files (serve index.html and CSS/JS from public/ directory)
-import os
 public_dir = os.path.join(os.path.dirname(__file__), "..", "public")
 public_dir_abs = os.path.abspath(public_dir)
 print(f"📁 Looking for static files at: {public_dir_abs}")
@@ -145,11 +144,6 @@ async def initialize_storage() -> None:
             print("   → DeltaStorage instance created, initializing connection...")
             await storage.initialize()
             print("✅ DeltaStorage initialized successfully")
-        except ValueError as e:
-            print(f"❌ DeltaStorage configuration error: {e}")
-            print("   Falling back to file-based storage")
-            storage = FileStorage()
-            await storage.initialize()
         except Exception as e:
             print(f"❌ DeltaStorage initialization failed: {type(e).__name__}: {e}")
             print("   Falling back to file-based storage")
@@ -369,7 +363,6 @@ async def get_registrations(limit: Optional[int] = None):
 @app.get("/")
 async def root():
     """Serve the HTML frontend."""
-    import os
     html_file = os.path.join(os.path.dirname(__file__), "..", "public", "index.html")
     if os.path.exists(html_file):
         return FileResponse(html_file, media_type="text/html")

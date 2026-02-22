@@ -19,6 +19,34 @@ const STARTUP_TIMEOUT = 120000; // 120 seconds to start - pip install can take t
 let frontendProcess = null;
 let backendProcess = null;
 let healthCheckInterval = null;
+let pythonExecutable = "python3"; // Will be detected later
+
+/**
+ * Find the Python executable that has the packages installed
+ */
+function findPythonWithPackages() {
+  const candidates = ["python3", "python", `/usr/bin/python3`, `/usr/bin/python`];
+  
+  for (const python of candidates) {
+    try {
+      const result = spawnSync(python, ["-c", "import fastapi; import sys; print(sys.executable)"], {
+        stdio: "pipe",
+        encoding: "utf-8",
+        cwd: __dirname,
+      });
+      
+      if (result.status === 0) {
+        const pythonPath = result.stdout.trim();
+        console.log(`✅ Found Python with packages: ${pythonPath}`);
+        return python;
+      }
+    } catch (e) {
+      // Try next candidate
+    }
+  }
+  
+  return "python3"; // Default fallback
+}
 
 /**
  * Ensure Python dependencies are installed
@@ -320,7 +348,7 @@ function startBackend() {
   return new Promise((resolve, reject) => {
     console.log(`\n🚀 Starting Backend (Python) on port ${BACKEND_PORT}...`);
 
-    backendProcess = spawn("python3", ["backend/main.py"], {
+    backendProcess = spawn(pythonExecutable, ["backend/main.py"], {
       cwd: __dirname,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
@@ -458,6 +486,11 @@ async function main() {
     // Ensure all dependencies are installed first
     await ensureNodeDependencies();
     await ensurePythonDependencies();
+
+    // Detect which Python executable has the packages
+    console.log("\n🔍 Detecting Python environment...");
+    pythonExecutable = findPythonWithPackages();
+    console.log(`📍 Using Python: ${pythonExecutable}\n`);
 
     // Start both services with timeout
     const startupPromise = Promise.race([

@@ -34,23 +34,27 @@ env:
   - name: ALLOW_EMAIL_REUSE
     value: "true"
 
+# Startup command for Databricks Apps
+cmd: 
+  - npm
+  - start
+
+# Port to expose (frontend runs on 8000)
+expose_path:
+  - port: 8000
+
 # STARTUP PROCEDURE (Databricks App):
 # ====================================
 # This app runs TWO services:
-# 1. Node.js Frontend (port 8000) - Serves registration form static files
-# 2. Python Backend (port 8001)  - Handles registrations, printing, Databricks APIs
+# 1. Node.js Frontend on port 8000 - Serves registration form static files
+# 2. Python Backend on port 8001  - Handles registrations, printing, Databricks APIs
 #
 # Entry point: npm start → node start-all.js (manages both services)
 #
 # The master startup script (start-all.js) will:
+# - Ensure Node.js dependencies are installed
+# - Ensure Python dependencies are installed
 # - Start Node.js frontend server
 # - Start Python backend server  
 # - Monitor both services for health
 # - Clean up both on shutdown
-#
-# Local Development:
-#   Terminal 1: npm start:frontend
-#   Terminal 2: npm start:backend
-#
-# Docker/Databricks Apps:
-#   npm start  (runs both automatically)

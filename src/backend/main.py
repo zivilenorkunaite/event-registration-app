@@ -101,8 +101,16 @@ async def initialize_storage() -> None:
 
     # Determine storage type
     if os.getenv("DATABRICKS_APP_NAME"):
-        print("🚀 Running in Databricks environment, using Delta Lake storage.")
-        storage = DeltaStorage()
+        print("🚀 Running in Databricks environment, attempting Delta Lake storage...")
+        try:
+            storage = DeltaStorage()
+            await storage.initialize()
+            print("✅ DeltaStorage initialized successfully")
+        except Exception as e:
+            print(f"⚠️  DeltaStorage failed: {e}")
+            print("   Falling back to file-based storage")
+            storage = FileStorage()
+            await storage.initialize()
     else:
         # Check for PostgreSQL credentials
         use_file_storage = not all(
@@ -124,7 +132,7 @@ async def initialize_storage() -> None:
             # TODO: Add PostgreSQL support if needed
             raise NotImplementedError("PostgreSQL support not yet implemented in Python backend")
 
-    await storage.initialize()
+        await storage.initialize()
 
 
 @app.get("/health")

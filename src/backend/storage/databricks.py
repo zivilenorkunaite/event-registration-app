@@ -31,16 +31,27 @@ class DeltaStorage(StorageBase):
     async def initialize(self) -> None:
         """Connect to Databricks warehouse."""
         try:
-            self.connection = sql.connect(
-                server_hostname=self.host,
-                http_path=self.http_path,
-                auth_type="oauth-m2m",
-                client_id=self.client_id,
-                client_secret=self.client_secret,
-            )
+            # Try to connect using OAuth M2M if credentials are available
+            if self.client_id and self.client_secret:
+                print("Attempting OAuth M2M authentication...")
+                self.connection = sql.connect(
+                    server_hostname=self.host,
+                    http_path=self.http_path,
+                    auth_type="oauth-m2m",
+                    client_id=self.client_id,
+                    client_secret=self.client_secret,
+                )
+            else:
+                # Fall back to default authentication (works in Databricks Apps)
+                print("Using default Databricks authentication...")
+                self.connection = sql.connect(
+                    server_hostname=self.host,
+                    http_path=self.http_path,
+                )
             print("✅ Connected to Databricks warehouse")
         except Exception as e:
             print(f"❌ Failed to connect to Databricks: {e}")
+            print("   Falling back to file-based storage")
             raise
 
     async def query(self, sql_query: str, values: Optional[List[Any]] = None) -> Dict[str, Any]:

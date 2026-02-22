@@ -12,6 +12,7 @@ class DeltaStorage(StorageBase):
 
     def __init__(self):
         """Initialize Databricks storage configuration."""
+        print("   [DeltaStorage] Reading environment variables...")
         self.host = os.getenv("DATABRICKS_HOST")
         self.warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
         self.client_id = os.getenv("DATABRICKS_CLIENT_ID")
@@ -19,10 +20,16 @@ class DeltaStorage(StorageBase):
         self.volume_path = os.getenv("DATABRICKS_VOLUME_PATH", "/Volumes/main/default/name_tags")
         self.catalog = os.getenv("DATABRICKS_CATALOG", "main")
         self.schema = os.getenv("DATABRICKS_SCHEMA", "default")
+        
+        print(f"   [DeltaStorage] Host: {self.host}")
+        print(f"   [DeltaStorage] Warehouse: {self.warehouse_id}")
+        print(f"   [DeltaStorage] Catalog: {self.catalog}")
+        print(f"   [DeltaStorage] Schema: {self.schema}")
+        print(f"   [DeltaStorage] Volume: {self.volume_path}")
 
         if not self.host or not self.warehouse_id:
             raise ValueError(
-                "Missing Databricks configuration: DATABRICKS_HOST and DATABRICKS_WAREHOUSE_ID required"
+                f"Missing Databricks configuration: DATABRICKS_HOST={'missing' if not self.host else 'set'}, DATABRICKS_WAREHOUSE_ID={'missing' if not self.warehouse_id else 'set'}"
             )
 
         self.connection = None
@@ -31,9 +38,10 @@ class DeltaStorage(StorageBase):
     async def initialize(self) -> None:
         """Connect to Databricks warehouse."""
         try:
+            print("   [DeltaStorage] Attempting database connection...")
             # Try to connect using OAuth M2M if credentials are available
             if self.client_id and self.client_secret:
-                print("Attempting OAuth M2M authentication...")
+                print("   [DeltaStorage] Using OAuth M2M authentication")
                 self.connection = sql.connect(
                     server_hostname=self.host,
                     http_path=self.http_path,
@@ -43,15 +51,14 @@ class DeltaStorage(StorageBase):
                 )
             else:
                 # Fall back to default authentication (works in Databricks Apps)
-                print("Using default Databricks authentication...")
+                print("   [DeltaStorage] Using default Databricks authentication")
                 self.connection = sql.connect(
                     server_hostname=self.host,
                     http_path=self.http_path,
                 )
-            print("✅ Connected to Databricks warehouse")
+            print("   [DeltaStorage] ✅ Connected to Databricks warehouse successfully")
         except Exception as e:
-            print(f"❌ Failed to connect to Databricks: {e}")
-            print("   Falling back to file-based storage")
+            print(f"   [DeltaStorage] ❌ Connection failed: {type(e).__name__}: {e}")
             raise
 
     async def query(self, sql_query: str, values: Optional[List[Any]] = None) -> Dict[str, Any]:

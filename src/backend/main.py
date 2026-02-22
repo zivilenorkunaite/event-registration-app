@@ -6,15 +6,19 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
+print("📚 [Backend] Loading FastAPI...")
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
+print("📚 [Backend] Loading storage modules...")
 
 from storage.base import StorageBase
 from storage.databricks import DeltaStorage
 from storage.file import FileStorage
 from services.nametag import generate_nametag_image, LABEL_WIDTH_PX, LABEL_HEIGHT_PX
 import httpx
+
+print("📚 [Backend] All imports successful")
 
 
 # Request/Response models
@@ -57,10 +61,19 @@ storage: StorageBase = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage app lifecycle: startup and shutdown."""
+    print("\n🚀 FastAPI lifespan: STARTUP\n")
     # Startup
-    await initialize_storage()
+    try:
+        await initialize_storage()
+        print("✅ Storage initialization successful\n")
+    except Exception as e:
+        print(f"\n❌ CRITICAL: Storage initialization failed: {e}\n")
+        raise
+    
     yield
+    
     # Shutdown
+    print("\n📴 FastAPI lifespan: SHUTDOWN\n")
     if storage:
         await storage.close()
 
@@ -99,15 +112,29 @@ async def initialize_storage() -> None:
     """Initialize storage backend."""
     global storage
 
+    print("\n📊 Storage Initialization Debug Info:")
+    print(f"   DATABRICKS_HOST: {bool(os.getenv('DATABRICKS_HOST'))}")
+    print(f"   DATABRICKS_WAREHOUSE_ID: {bool(os.getenv('DATABRICKS_WAREHOUSE_ID'))}")
+    print(f"   DATABRICKS_CLIENT_ID: {bool(os.getenv('DATABRICKS_CLIENT_ID'))}")
+    print(f"   DATABRICKS_CLIENT_SECRET: {bool(os.getenv('DATABRICKS_CLIENT_SECRET'))}")
+    print()
+
     # Determine storage type based on available credentials
     if os.getenv("DATABRICKS_HOST") and os.getenv("DATABRICKS_WAREHOUSE_ID"):
-        print("🚀 Running in Databricks environment with credentials, attempting Delta Lake storage...")
+        print("🚀 Databricks environment detected. Attempting Delta Lake storage...")
         try:
+            print("   → Creating DeltaStorage instance...")
             storage = DeltaStorage()
+            print("   → DeltaStorage instance created, initializing connection...")
             await storage.initialize()
             print("✅ DeltaStorage initialized successfully")
+        except ValueError as e:
+            print(f"❌ DeltaStorage configuration error: {e}")
+            print("   Falling back to file-based storage")
+            storage = FileStorage()
+            await storage.initialize()
         except Exception as e:
-            print(f"⚠️  DeltaStorage failed: {e}")
+            print(f"❌ DeltaStorage initialization failed: {type(e).__name__}: {e}")
             print("   Falling back to file-based storage")
             storage = FileStorage()
             await storage.initialize()
@@ -124,15 +151,17 @@ async def initialize_storage() -> None:
 
         if use_file_storage:
             print(
-                "📁 Running locally, using file-based storage (no Databricks or PostgreSQL credentials found)."
+                "📁 No Databricks or PostgreSQL credentials found, using file-based storage."
             )
             storage = FileStorage()
         else:
-            print("🐘 Running locally, using PostgreSQL database.")
+            print("🐘 PostgreSQL credentials found, using PostgreSQL database.")
             # TODO: Add PostgreSQL support if needed
             raise NotImplementedError("PostgreSQL support not yet implemented in Python backend")
 
         await storage.initialize()
+    
+    print(f"✅ Storage backend initialized: {storage.__class__.__name__}\n")
 
 
 @app.get("/health")
@@ -330,4 +359,6 @@ if __name__ == "__main__":
     import uvicorn
 
     port = int(os.getenv("BACKEND_PORT", 8001))
+    print(f"\n🚀 [Backend] Starting Uvicorn on 0.0.0.0:{port}")
+    print(f"📝 [Backend] Log level: INFO\n")
     uvicorn.run(app, host="0.0.0.0", port=port)

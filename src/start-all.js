@@ -1,43 +1,31 @@
 /**
- * Master startup script for Databricks App
- * Runs both Node.js frontend (port 8000) and Python backend (port 8001)
- *
- * This is the single entry point when running on Databricks Apps.
- * It manages both services and ensures they're both healthy before responding.
+ * Master startup script for Event Registration App
+ * Starts Node.js server which orchestrates both frontend and Python backend
  */
 
 const { spawn, spawnSync } = require("child_process");
 const path = require("path");
-const http = require("http");
 const fs = require("fs");
 
-const FRONTEND_PORT = process.env.PORT || 8000;
-const BACKEND_PORT = process.env.BACKEND_PORT || 8001;
-const STARTUP_TIMEOUT = 120000; // 120 seconds to start - pip install can take time
-
-// Store process references for cleanup
-let frontendProcess = null;
-let backendProcess = null;
-let healthCheckInterval = null;
-let pythonExecutable = "python3"; // Will be detected later
+const STARTUP_TIMEOUT = 120000; // 120 seconds
+let serverProcess = null;
 
 /**
- * Find the Python executable that has the packages installed
+ * Find Python executable with packages installed
  */
 function findPythonWithPackages() {
   const candidates = ["python3", "python", `/usr/bin/python3`, `/usr/bin/python`];
   
   for (const python of candidates) {
     try {
-      const result = spawnSync(python, ["-c", "import fastapi; import sys; print(sys.executable)"], {
+      const result = spawnSync(python, ["-c", "import fastapi; print('ok')"], {
         stdio: "pipe",
         encoding: "utf-8",
         cwd: __dirname,
       });
       
       if (result.status === 0) {
-        const pythonPath = result.stdout.trim();
-        console.log(`✅ Found Python with packages: ${pythonPath}`);
+        console.log(`✅ Found Python with packages: ${python}`);
         return python;
       }
     } catch (e) {
@@ -49,175 +37,7 @@ function findPythonWithPackages() {
 }
 
 /**
- * Ensure Python dependencies are installed
- */
-async function ensurePythonDependencies() {
-  return new Promise((resolve, reject) => {
-    console.log("📦 Checking Python dependencies...");
-
-    // Check if fastapi is available
-    const checkCmd = spawnSync("python3", ["-c", "import fastapi"], {
-      stdio: "pipe",
-      cwd: __dirname,
-    });
-
-    if (checkCmd.status === 0) {
-      console.log("✅ Python dependencies already installed");
-      resolve();
-      return;
-    }
-
-    const requirementsPath = path.join(
-      __dirname,
-      "backend",
-      "requirements.txt",
-    );
-    if (!fs.existsSync(requirementsPath)) {
-      reject(new Error("backend/requirements.txt not found"));
-      return;
-    }
-
-    console.log("📦 Installing Python dependencies...");
-
-    // Try pip3 first, using python3 -m pip as fallback
-    const pipInstall = () => {
-      return new Promise((resolveInstall, rejectInstall) => {
-        const requirementsFile = path.join(
-          __dirname,
-          "backend",
-          "requirements.txt",
-        );
-        console.log(`📝 Using requirements file: ${requirementsFile}`);
-
-        // Try pip3 first
-        console.log("🔧 Attempting: pip3 install -r backend/requirements.txt");
-        const pip = spawn("pip3", ["install", "-r", requirementsFile], {
-          cwd: __dirname,
-          stdio: "inherit",
-          timeout: 120000,
-        });
-
-        pip.on("close", (code) => {
-          if (code === 0) {
-            console.log("✅ Python dependencies installed with pip3");
-            resolveInstall();
-          } else {
-            console.log(
-              `⚠️  pip3 failed with code ${code}, trying python3 -m pip...`,
-            );
-            // Fallback: try python3 -m pip
-            const pythonPip = spawn(
-              "python3",
-              ["-m", "pip", "install", "-r", requirementsFile],
-              {
-                cwd: __dirname,
-                stdio: "inherit",
-              },
-            );
-
-            pythonPip.on("close", (pythonCode) => {
-              if (pythonCode === 0) {
-                console.log("✅ Python dependencies installed with python3 -m pip");
-                resolveInstall();
-              } else {
-                console.log(
-                  `⚠️  python3 -m pip failed with code ${pythonCode}, trying apt-get...`,
-                );
-                // Last resort: try apt-get to install pip
-                const aptGet = spawn("apt-get", ["update"], {
-                  cwd: __dirname,
-                  stdio: "inherit",
-                });
-
-                aptGet.on("close", (aptCode) => {
-                  if (aptCode === 0) {
-                    console.log("📦 Installing python3-pip via apt-get...");
-                    const installPip = spawn(
-                      "apt-get",
-                      ["install", "-y", "python3-pip"],
-                      {
-                        cwd: __dirname,
-                        stdio: "inherit",
-                      },
-                    );
-
-                    installPip.on("close", (pipInstallCode) => {
-                      if (pipInstallCode === 0) {
-                        console.log(
-                          "🔧 Retrying: pip3 install -r backend/requirements.txt",
-                        );
-                        const retryPip = spawn(
-                          "pip3",
-                          ["install", "-r", requirementsFile],
-                          {
-                            cwd: __dirname,
-                            stdio: "inherit",
-                          },
-                        );
-
-                        retryPip.on("close", (retryCode) => {
-                          if (retryCode === 0) {
-                            console.log(
-                              "✅ Python dependencies installed after pip reinstall",
-                            );
-                            resolveInstall();
-                          } else {
-                            rejectInstall(
-                              new Error(
-                                `pip install failed after reinstalling pip (code ${retryCode})`,
-                              ),
-                            );
-                          }
-                        });
-
-                        retryPip.on("error", (err) => {
-                          rejectInstall(
-                            new Error(`Failed to run pip3 retry: ${err.message}`),
-                          );
-                        });
-                      } else {
-                        rejectInstall(
-                          new Error(
-                            `apt-get install python3-pip failed (code ${pipInstallCode})`,
-                          ),
-                        );
-                      }
-                    });
-                  } else {
-                    rejectInstall(
-                      new Error(
-                        `apt-get update failed (code ${aptCode}) - cannot install pip`,
-                      ),
-                    );
-                  }
-                });
-              }
-            });
-
-            pythonPip.on("error", (err) => {
-              rejectInstall(new Error(`Failed to run python3 -m pip: ${err.message}`));
-            });
-          }
-        });
-
-        pip.on("error", (err) => {
-          rejectInstall(new Error(`Failed to run pip3: ${err.message}`));
-        });
-      });
-    };
-
-    pipInstall()
-      .then(() => {
-        resolve();
-      })
-      .catch((err) => {
-        reject(err);
-      });
-  });
-}
-
-/**
- * Ensure Node.js dependencies are installed
+ * Ensure Node dependencies are installed
  */
 async function ensureNodeDependencies() {
   return new Promise((resolve, reject) => {
@@ -232,8 +52,8 @@ async function ensureNodeDependencies() {
     console.log("📦 Installing Node.js dependencies...");
     const npm = spawn("npm", ["install"], {
       cwd: __dirname,
-      stdio: "inherit", // Show all output directly
-      timeout: 120000, // 2 minute timeout
+      stdio: "inherit",
+      timeout: 120000,
     });
 
     npm.on("close", (code) => {
@@ -241,48 +61,127 @@ async function ensureNodeDependencies() {
         console.log("✅ Node.js dependencies installed");
         resolve();
       } else {
-        reject(
-          new Error(`npm install failed with code ${code} - see output above`),
-        );
+        reject(new Error(`npm install failed with code ${code}`));
       }
     });
 
     npm.on("error", (err) => {
-      reject(
-        new Error(`Failed to install Node.js dependencies: ${err.message}`),
-      );
+      reject(new Error(`Failed to install Node.js dependencies: ${err.message}`));
     });
   });
 }
 
-// Graceful shutdown handler
+/**
+ * Ensure Python dependencies are installed
+ */
+async function ensurePythonDependencies() {
+  return new Promise((resolve, reject) => {
+    console.log("📦 Checking Python dependencies...");
+
+    const checkCmd = spawnSync("python3", ["-c", "import fastapi"], {
+      stdio: "pipe",
+      cwd: __dirname,
+    });
+
+    if (checkCmd.status === 0) {
+      console.log("✅ Python dependencies already installed");
+      resolve();
+      return;
+    }
+
+    const requirementsPath = path.join(__dirname, "backend", "requirements.txt");
+    if (!fs.existsSync(requirementsPath)) {
+      reject(new Error("backend/requirements.txt not found"));
+      return;
+    }
+
+    console.log("📦 Installing Python dependencies...");
+
+    // Try pip3 install
+    const pip = spawn("pip3", ["install", "-r", requirementsPath], {
+      cwd: __dirname,
+      stdio: "inherit",
+      timeout: 120000,
+    });
+
+    pip.on("close", (code) => {
+      if (code === 0) {
+        console.log("✅ Python dependencies installed");
+        resolve();
+      } else {
+        console.log("⚠️  pip3 failed, trying python3 -m pip...");
+        
+        const pythonPip = spawn("python3", ["-m", "pip", "install", "-r", requirementsPath], {
+          cwd: __dirname,
+          stdio: "inherit",
+        });
+
+        pythonPip.on("close", (pythonCode) => {
+          if (pythonCode === 0) {
+            console.log("✅ Python dependencies installed");
+            resolve();
+          } else {
+            reject(new Error(`Failed to install Python dependencies`));
+          }
+        });
+      }
+    });
+
+    pip.on("error", (err) => {
+      reject(new Error(`Failed to run pip3: ${err.message}`));
+    });
+  });
+}
+
+/**
+ * Start the Node.js server (which starts frontend + backend)
+ */
+function startServer() {
+  return new Promise((resolve, reject) => {
+    console.log("\n🚀 Starting Node.js server...");
+
+    const pythonExe = findPythonWithPackages();
+
+    serverProcess = spawn("node", ["server.js"], {
+      cwd: __dirname,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        PYTHONEXE: pythonExe,
+      },
+      timeout: STARTUP_TIMEOUT,
+    });
+
+    serverProcess.on("error", (err) => {
+      console.error(`❌ Failed to start server: ${err.message}`);
+      reject(err);
+    });
+
+    // Give server time to start
+    setTimeout(() => {
+      console.log(`✅ Server started successfully!`);
+      resolve();
+    }, 3000);
+  });
+}
+
+/**
+ * Graceful shutdown handler
+ */
 async function shutdown(signal) {
   console.log(`\n📴 Received ${signal}, shutting down gracefully...`);
 
-  if (healthCheckInterval) {
-    clearInterval(healthCheckInterval);
+  if (serverProcess && !serverProcess.killed) {
+    console.log("Stopping server...");
+    serverProcess.kill("SIGTERM");
   }
 
-  // Kill both processes
-  if (frontendProcess && !frontendProcess.killed) {
-    console.log("Stopping frontend...");
-    frontendProcess.kill("SIGTERM");
-  }
-
-  if (backendProcess && !backendProcess.killed) {
-    console.log("Stopping backend...");
-    backendProcess.kill("SIGTERM");
-  }
-
-  // Wait a bit for graceful shutdown
+  // Wait for graceful shutdown
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
   // Force kill if still running
-  if (frontendProcess && !frontendProcess.killed) {
-    frontendProcess.kill("SIGKILL");
-  }
-  if (backendProcess && !backendProcess.killed) {
-    backendProcess.kill("SIGKILL");
+  if (serverProcess && !serverProcess.killed) {
+    serverProcess.kill("SIGKILL");
   }
 
   console.log("✅ Shutdown complete");
@@ -294,246 +193,36 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
 /**
- * Start the Node.js frontend server
- */
-function startFrontend() {
-  return new Promise((resolve, reject) => {
-    console.log(`\n🚀 Starting Frontend (Node.js) on port ${FRONTEND_PORT}...`);
-
-    frontendProcess = spawn("node", ["server.js"], {
-      cwd: __dirname,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        PORT: FRONTEND_PORT,
-      },
-    });
-
-    let started = false;
-
-    frontendProcess.stdout.on("data", (data) => {
-      const output = data.toString().trim();
-      console.log(`[Frontend] ${output}`);
-
-      if (output.includes("Frontend server is running")) {
-        if (!started) {
-          started = true;
-          resolve();
-        }
-      }
-    });
-
-    frontendProcess.stderr.on("data", (data) => {
-      console.log(`[Frontend] ${data.toString().trim()}`);
-    });
-
-    frontendProcess.on("error", (err) => {
-      console.error(`❌ Failed to start frontend: ${err.message}`);
-      reject(err);
-    });
-
-    frontendProcess.on("exit", (code) => {
-      console.log(`⚠️  Frontend exited with code ${code}`);
-      if (!started) {
-        reject(new Error(`Frontend exited with code ${code} before starting`));
-      }
-    });
-  });
-}
-
-/**
- * Start the Python backend server
- */
-function startBackend() {
-  return new Promise((resolve, reject) => {
-    console.log(`\n🚀 Starting Backend (Python) on port ${BACKEND_PORT}...`);
-
-    backendProcess = spawn(pythonExecutable, ["backend/main.py"], {
-      cwd: __dirname,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        BACKEND_PORT: BACKEND_PORT,
-        PYTHONUNBUFFERED: "1",
-      },
-    });
-
-    let started = false;
-
-    backendProcess.stdout.on("data", (data) => {
-      const output = data.toString().trim();
-      if (output) {
-        console.log(`[Backend] ${output}`);
-      }
-
-      if (output.includes("Uvicorn running on")) {
-        if (!started) {
-          started = true;
-          resolve();
-        }
-      }
-    });
-
-    backendProcess.stderr.on("data", (data) => {
-      const output = data.toString().trim();
-      if (output) {
-        console.log(`[Backend] ${output}`);
-      }
-    });
-
-    backendProcess.on("error", (err) => {
-      console.error(`❌ Failed to start backend: ${err.message}`);
-      reject(err);
-    });
-
-    backendProcess.on("exit", (code) => {
-      console.log(`⚠️  Backend exited with code ${code}`);
-      if (!started) {
-        reject(new Error(`Backend exited with code ${code} before starting`));
-      }
-    });
-  });
-}
-
-/**
- * Health check for frontend
- */
-function checkFrontendHealth() {
-  return new Promise((resolve) => {
-    const req = http.get(
-      `http://localhost:${FRONTEND_PORT}/health`,
-      { timeout: 5000 },
-      (res) => {
-        resolve(res.statusCode === 200);
-      },
-    );
-    req.on("error", () => resolve(false));
-    req.on("timeout", () => {
-      req.abort();
-      resolve(false);
-    });
-  });
-}
-
-/**
- * Health check for backend
- */
-function checkBackendHealth() {
-  return new Promise((resolve) => {
-    const req = http.get(
-      `http://localhost:${BACKEND_PORT}/health`,
-      { timeout: 5000 },
-      (res) => {
-        resolve(res.statusCode === 200);
-      },
-    );
-    req.on("error", () => resolve(false));
-    req.on("timeout", () => {
-      req.abort();
-      resolve(false);
-    });
-  });
-}
-
-/**
- * Monitor and report on service health
- */
-function startHealthMonitor() {
-  let frontendHealthy = false;
-  let backendHealthy = false;
-
-  healthCheckInterval = setInterval(async () => {
-    const fe = await checkFrontendHealth();
-    const be = await checkBackendHealth();
-
-    // Only log changes
-    if (fe !== frontendHealthy) {
-      frontendHealthy = fe;
-      console.log(
-        `${fe ? "✅" : "❌"} Frontend: ${fe ? "healthy" : "unhealthy"}`,
-      );
-    }
-
-    if (be !== backendHealthy) {
-      backendHealthy = be;
-      console.log(
-        `${be ? "✅" : "❌"} Backend: ${be ? "healthy" : "unhealthy"}`,
-      );
-    }
-
-    // Report overall status
-    if (fe && be) {
-      console.log("📊 All services healthy ✅");
-    } else if (!fe || !be) {
-      console.log(
-        `📊 Services status: Frontend ${fe ? "✅" : "❌"} Backend ${be ? "✅" : "❌"}`,
-      );
-    }
-  }, 30000); // Check every 30 seconds
-}
-
-/**
  * Main startup sequence
  */
 async function main() {
   try {
-    console.log("🎬 Event Registration App - Master Startup Script");
-    console.log(
-      `📍 Environment: ${process.env.DATABRICKS_APP_NAME ? "Databricks" : "Local Development"}`,
-    );
-    console.log(`⏱️  Startup timeout: ${STARTUP_TIMEOUT}ms\n`);
+    console.log("🎬 Event Registration App - Server Startup");
+    console.log(`📍 Environment: ${process.env.DATABRICKS_APP_NAME ? "Databricks Apps" : "Local Development"}\n`);
 
-    // Ensure all dependencies are installed first
+    // Ensure dependencies
     await ensureNodeDependencies();
     await ensurePythonDependencies();
 
-    // Detect which Python executable has the packages
-    console.log("\n🔍 Detecting Python environment...");
-    pythonExecutable = findPythonWithPackages();
-    console.log(`📍 Using Python: ${pythonExecutable}\n`);
+    // Start server (which will start both frontend and backend)
+    await startServer();
 
-    // Start both services with timeout
-    const startupPromise = Promise.race([
-      Promise.all([startFrontend(), startBackend()]),
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error("Startup timeout exceeded")),
-          STARTUP_TIMEOUT,
-        ),
-      ),
-    ]);
-
-    await startupPromise;
-
-    console.log("\n✨ Both services started successfully!\n");
-    console.log("📋 Service URLs:");
-    console.log(`   Frontend:  http://localhost:${FRONTEND_PORT}`);
-    console.log(`   Backend:   http://localhost:${BACKEND_PORT}`);
-    console.log(`   Health:    http://localhost:${FRONTEND_PORT}/health`);
-    console.log("\n🔗 Frontend calls Backend at: http://localhost:8001");
-    console.log(
-      `\n💡 Running on ${process.env.DATABRICKS_APP_NAME ? "Databricks App" : "Local Machine"}`,
-    );
-
-    // Start health monitoring
-    startHealthMonitor();
+    const PORT = process.env.PORT || 8000;
+    console.log(`\n✨ App is running!`);
+    console.log(`📍 Frontend: http://localhost:${PORT}`);
+    console.log(`📍 Health check: http://localhost:${PORT}/health\n`);
   } catch (error) {
     console.error(`\n❌ Startup failed: ${error.message}`);
-    console.error("\n🔧 Troubleshooting:");
-    console.error("   1. Check that Node.js and Python are installed");
-    console.error(
-      "   2. Verify backend requirements: pip install -r backend/requirements.txt",
-    );
-    console.error("   3. Ensure ports 8000 and 8001 are available");
-    console.error("   4. Check DATABRICKS_* environment variables are set");
+    console.error(`\n🔧 Troubleshooting:`);
+    console.error(`   1. Ensure Node.js 18+ is installed`);
+    console.error(`   2. Ensure Python 3.8+ is installed`);
+    console.error(`   3. Run: pip install -r backend/requirements.txt`);
+    console.error(`   4. Check ports 8000 and 8001 are available\n`);
 
-    // Attempt cleanup
-    if (frontendProcess) frontendProcess.kill();
-    if (backendProcess) backendProcess.kill();
-
+    if (serverProcess) serverProcess.kill();
     process.exit(1);
   }
 }
 
-// Start the application
+// Start the app
 main();

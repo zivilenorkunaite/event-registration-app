@@ -593,7 +593,7 @@
           printBtn.textContent = "Printing...";
 
           try {
-            const response = await fetch("http://localhost:8001/api/print", {
+            const response = await fetch("/api/print", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(currentNameTagData),
@@ -655,7 +655,7 @@
           messageDiv.className = "";
 
           try {
-            const response = await fetch("http://localhost:8001/api/register", {
+            const response = await fetch("/api/register", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(data),

@@ -1,51 +1,25 @@
+command:
+  - "gunicorn"
+  - "backend.main:app"
+  - "-w"
+  - "2"
+  - "-b"
+  - "127.0.0.1:8000"
+  - "--worker-class"
+  - "uvicorn.workers.UvicornWorker"
+
 env:
-  # SQL Warehouse ID for the event registrations table
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: "app-warehouse"
-
-  # Custom catalog and schema (auto-set by Databricks, override if needed)
   - name: DATABRICKS_CATALOG
     value: main
-
   - name: DATABRICKS_SCHEMA
     value: default
-
-  # UC Volume name for storing name tag images
   - name: DATABRICKS_VOLUME_NAME
     value: nametags
-
-  # Full UC Volume path for storing name tag images (computed from catalog/schema/volume_name)
   - name: DATABRICKS_VOLUME_PATH
     valueFrom: "app-volume"
-
-  # Server port (exposed by Databricks Apps)
   - name: PORT
     value: "8000"
-
-  # Allow email reuse in registrations (optional)
   - name: ALLOW_EMAIL_REUSE
     value: "true"
-
-# Startup command for Databricks Apps
-cmd:
-  - npm
-  - start
-
-# Port to expose (frontend runs on 8000)
-expose_path:
-  - port: 8000
-
-# Max startup time (pip install can take a while)
-max_startup_time: 300
-
-# STARTUP PROCEDURE (Databricks App):
-# ====================================
-# This app runs a single FastAPI service:
-# - FastAPI backend on port 8000
-# - Serves registration form + API endpoints
-# - Handles registrations, printing, Databricks APIs
-#
-# Entry point: gunicorn backend.main:app
-# - Uses UvicornWorker for ASGI support
-# - 2 worker processes for concurrency
-# - Automatically manages lifecycle

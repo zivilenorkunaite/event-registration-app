@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "Event Registration App - FastAPI backend with HTML frontend",
   "scripts": {
-    "start": "cd backend && python3 -m gunicorn main:app -w 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

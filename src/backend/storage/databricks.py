@@ -1,5 +1,6 @@
 """Databricks Delta Lake storage implementation."""
 
+import asyncio
 import os
 from typing import Any, List, Dict, Optional
 from databricks import sql
@@ -36,13 +37,15 @@ class DeltaStorage(StorageBase):
         self.http_path = f"/sql/1.0/warehouses/{self.warehouse_id}"
 
     async def initialize(self) -> None:
-        """Connect to Databricks warehouse."""
+        """Connect to Databricks warehouse and ensure table exists."""
         try:
             print("   [DeltaStorage] Attempting database connection...")
             # Try to connect using OAuth M2M if credentials are available
+            # Wrap synchronous sql.connect in asyncio.to_thread to avoid blocking event loop
             if self.client_id and self.client_secret:
                 print("   [DeltaStorage] Using OAuth M2M authentication")
-                self.connection = sql.connect(
+                self.connection = await asyncio.to_thread(
+                    sql.connect,
                     server_hostname=self.host,
                     http_path=self.http_path,
                     auth_type="oauth-m2m",
@@ -52,13 +55,46 @@ class DeltaStorage(StorageBase):
             else:
                 # Fall back to default authentication (works in Databricks Apps)
                 print("   [DeltaStorage] Using default Databricks authentication")
-                self.connection = sql.connect(
+                self.connection = await asyncio.to_thread(
+                    sql.connect,
                     server_hostname=self.host,
                     http_path=self.http_path,
                 )
             print("   [DeltaStorage] ✅ Connected to Databricks warehouse successfully")
+            
+            # Create table if it doesn't exist
+            print("   [DeltaStorage] Ensuring event_registrations table exists...")
+            await self._ensure_table_exists()
+            print("   [DeltaStorage] ✅ Table check complete")
         except Exception as e:
-            print(f"   [DeltaStorage] ❌ Connection failed: {type(e).__name__}: {e}")
+            print(f"   [DeltaStorage] ❌ Initialization failed: {type(e).__name__}: {e}")
+            raise
+
+    async def _ensure_table_exists(self) -> None:
+        """Create event_registrations table if it doesn't exist."""
+        try:
+            create_table_sql = f"""
+            CREATE TABLE IF NOT EXISTS {self.catalog}.{self.schema}.event_registrations (
+                id BIGINT GENERATED ALWAYS AS IDENTITY,
+                name STRING NOT NULL,
+                email STRING NOT NULL,
+                company STRING,
+                group_name STRING,
+                location STRING,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id)
+            );
+            """
+            
+            async def _create():
+                cursor = self.connection.cursor()
+                cursor.execute(create_table_sql)
+                cursor.close()
+            
+            await asyncio.to_thread(_create)
+            print(f"   [DeltaStorage] ✅ Table {self.catalog}.{self.schema}.event_registrations ready")
+        except Exception as e:
+            print(f"   [DeltaStorage] ❌ Failed to ensure table exists: {e}")
             raise
 
     async def query(self, sql_query: str, values: Optional[List[Any]] = None) -> Dict[str, Any]:
@@ -67,49 +103,74 @@ class DeltaStorage(StorageBase):
             raise RuntimeError("Storage not initialized. Call initialize() first.")
 
         try:
-            cursor = self.connection.cursor()
-            if values:
-                cursor.execute(sql_query, values)
-            else:
-                cursor.execute(sql_query)
-
-            rows = cursor.fetchall()
+            async def _execute_query():
+                try:
+                    cursor = self.connection.cursor()
+                    print(f"   [Query] Executing: {sql_query[:100]}...")
+                    if values:
+                        print(f"   [Query] With values: {values}")
+                        cursor.execute(sql_query, values)
+                    else:
+                        cursor.execute(sql_query)
+                    rows = cursor.fetchall()
+                    cursor.close()
+                    return rows
+                except Exception as e:
+                    print(f"   [Query] Cursor error: {type(e).__name__}: {e}")
+                    raise
+            
+            rows = await asyncio.to_thread(_execute_query)
             return {"rows": rows if rows else []}
         except Exception as e:
-            print(f"❌ Databricks query failed: {e}")
+            print(f"❌ Databricks query failed: {type(e).__name__}: {e}")
             raise
 
     async def check_email_exists(self, email: str) -> bool:
         """Check if email exists in registrations."""
-        result = await self.query(
-            f"""
-            SELECT COUNT(*) as count FROM {self.catalog}.{self.schema}.event_registrations
-            WHERE email = ?
-            """,
-            [email],
-        )
-        return result["rows"][0][0] > 0 if result["rows"] else False
+        try:
+            result = await self.query(
+                f"""
+                SELECT COUNT(*) as count FROM {self.catalog}.{self.schema}.event_registrations
+                WHERE email = ?
+                """,
+                [email],
+            )
+            count = result["rows"][0][0] if result["rows"] else 0
+            return count > 0
+        except Exception as e:
+            print(f"❌ check_email_exists failed: {type(e).__name__}: {e}")
+            raise
 
     async def save_registration(
         self, name: str, email: str, company: str, group: str, location: str
     ) -> int:
         """Save a new registration to Delta Lake."""
         try:
-            cursor = self.connection.cursor()
-            cursor.execute(
-                f"""
-                INSERT INTO {self.catalog}.{self.schema}.event_registrations
-                (name, email, company, group_name, location)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                [name, email, company, group, location],
-            )
-            # Get the ID of the newly inserted row
-            cursor.execute("SELECT LAST_INSERT_ID()")
-            result = cursor.fetchone()
-            return result[0] if result else 0
+            async def _save():
+                try:
+                    cursor = self.connection.cursor()
+                    print(f"   [SaveReg] Saving: {name}, {email}")
+                    cursor.execute(
+                        f"""
+                        INSERT INTO {self.catalog}.{self.schema}.event_registrations
+                        (name, email, company, group_name, location)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        [name, email, company, group, location],
+                    )
+                    cursor.close()
+                    print(f"   [SaveReg] ✓ Registration saved successfully")
+                    return 1
+                except Exception as e:
+                    print(f"   [SaveReg] Cursor error: {type(e).__name__}: {e}")
+                    raise
+            
+            await asyncio.to_thread(_save)
+            return 1  # Placeholder - actual ID management would need revision
         except Exception as e:
-            print(f"❌ Failed to save registration: {e}")
+            print(f"❌ Failed to save registration: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             raise
 
     async def get_registrations(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:

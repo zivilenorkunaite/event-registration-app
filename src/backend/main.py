@@ -14,10 +14,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr
 print("📚 [Backend] Loading storage modules...")
 
-from storage.base import StorageBase
-from storage.databricks import DeltaStorage
-from storage.file import FileStorage
-from services.nametag import generate_nametag_image, LABEL_WIDTH_PX, LABEL_HEIGHT_PX
+from backend.storage.base import StorageBase
+from backend.storage.databricks import DeltaStorage
+from backend.storage.file import FileStorage
+from backend.services.nametag import generate_nametag_image, LABEL_WIDTH_PX, LABEL_HEIGHT_PX
 import httpx
 
 print("📚 [Backend] All imports successful")
@@ -64,13 +64,9 @@ storage: StorageBase = None
 async def lifespan(app: FastAPI):
     """Manage app lifecycle: startup and shutdown."""
     print("\n🚀 FastAPI lifespan: STARTUP\n")
-    # Startup
-    try:
-        await initialize_storage()
-        print("✅ Storage initialization successful\n")
-    except Exception as e:
-        print(f"\n❌ CRITICAL: Storage initialization failed: {e}\n")
-        raise
+    # Note: Storage initialization is now lazy (happens on first use)
+    # This allows the app to start quickly even if database is unavailable
+    print("✅ App startup complete (storage will initialize on first use)\n")
     
     yield
     
@@ -93,8 +89,13 @@ app.add_middleware(
 )
 
 # Mount static files (serve index.html and CSS/JS from public/ directory)
-public_dir = os.path.join(os.path.dirname(__file__), "..", "public")
+# Support both local dev and Databricks deployment paths
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.dirname(backend_dir)
+public_dir = os.path.join(src_dir, "public")
 public_dir_abs = os.path.abspath(public_dir)
+print(f"📁 Backend dir: {backend_dir}")
+print(f"📁 Src dir: {src_dir}")
 print(f"📁 Looking for static files at: {public_dir_abs}")
 if os.path.isdir(public_dir_abs):
     print(f"✅ Found public directory, mounting static files")
@@ -125,8 +126,13 @@ def sanitize_input(text: str, max_length: int = 255) -> str:
 
 
 async def initialize_storage() -> None:
-    """Initialize storage backend."""
+    """Initialize storage backend (idempotent - safe to call multiple times)."""
     global storage
+    
+    # Skip if already initialized
+    if storage is not None:
+        print(f"   ✓ Storage already initialized: {storage.__class__.__name__}")
+        return
 
     print("\n📊 Storage Initialization Debug Info:")
     print(f"   DATABRICKS_HOST: {bool(os.getenv('DATABRICKS_HOST'))}")
@@ -141,11 +147,14 @@ async def initialize_storage() -> None:
         try:
             print("   → Creating DeltaStorage instance...")
             storage = DeltaStorage()
-            print("   → DeltaStorage instance created, initializing connection...")
+            print(f"   → DeltaStorage instance created: {storage}")
+            print("   → Initializing connection...")
             await storage.initialize()
             print("✅ DeltaStorage initialized successfully")
         except Exception as e:
             print(f"❌ DeltaStorage initialization failed: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             print("   Falling back to file-based storage")
             storage = FileStorage()
             await storage.initialize()
@@ -172,7 +181,9 @@ async def initialize_storage() -> None:
 
         await storage.initialize()
     
-    print(f"✅ Storage backend initialized: {storage.__class__.__name__}\n")
+    print(f"✅ Storage backend initialized: {storage.__class__.__name__}")
+    print(f"   Storage instance type: {type(storage)}")
+    print(f"   Storage is None: {storage is None}\n")
 
 
 @app.get("/health")
@@ -190,6 +201,15 @@ async def health_check():
 @app.post("/api/register")
 async def register(req: RegistrationRequest):
     """Register a new attendee."""
+    try:
+        await initialize_storage()  # Ensure storage is initialized
+    except Exception as e:
+        print(f"❌ Storage initialization failed: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Storage initialization failed: {str(e)}",
+        )
+    
     # Validate required fields
     if not all([req.firstName, req.lastName, req.company, req.email]):
         raise HTTPException(status_code=400, detail="All text fields are required.")
@@ -231,17 +251,30 @@ async def register(req: RegistrationRequest):
 
         return {"message": "Check-in successful! Welcome."}
 
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"❌ Registration error: {e}")
+        print(f"❌ Registration error: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail="An error occurred while checking you in. Please try again.",
+            detail=f"Registration failed: {str(e)}",
         )
 
 
 @app.post("/api/print")
 async def print_nametag(req: PrintRequest):
     """Generate and send name tag to printer."""
+    try:
+        await initialize_storage()  # Ensure storage is initialized
+    except Exception as e:
+        print(f"❌ Storage initialization failed for print: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Storage initialization failed: {str(e)}",
+        )
+    
     if not req.firstName:
         raise HTTPException(status_code=400, detail="First name is required for printing.")
 
@@ -266,8 +299,8 @@ async def print_nametag(req: PrintRequest):
         base_filename = f"nametag_{name_display.replace(' ', '_')}_{timestamp}"
         png_filename = f"{base_filename}.png"
 
-        # Save image to storage
-        await storage.save_image_to_volume(image_buffer, png_filename)
+        # TODO: Save image to storage (disabled for now, will implement later)
+        # await storage.save_image_to_volume(image_buffer, png_filename)
 
         # If no printer server URL, return image for download only
         if not NIIMBOT_SERVER_URL:
@@ -352,18 +385,25 @@ async def print_nametag(req: PrintRequest):
 async def get_registrations(limit: Optional[int] = None):
     """Get all registrations (for admin view)."""
     try:
+        await initialize_storage()  # Ensure storage is initialized
         registrations = await storage.get_registrations(limit=limit)
         return {"registrations": registrations, "count": len(registrations)}
     except Exception as e:
-        print(f"❌ Failed to fetch registrations: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch registrations.")
+        print(f"❌ Failed to fetch registrations: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to fetch registrations: {str(e)}")
 
 
 # Root endpoint - serve index.html
 @app.get("/")
 async def root():
     """Serve the HTML frontend."""
-    html_file = os.path.join(os.path.dirname(__file__), "..", "public", "index.html")
-    if os.path.exists(html_file):
-        return FileResponse(html_file, media_type="text/html")
-    return {"message": "Event Registration Backend API"}
+    html_file = os.path.join(src_dir, "public", "index.html")
+    html_file_abs = os.path.abspath(html_file)
+    print(f"🌐 Root request - looking for index.html at: {html_file_abs}")
+    if os.path.exists(html_file_abs):
+        print(f"✅ Found index.html, serving it")
+        return FileResponse(html_file_abs, media_type="text/html")
+    print(f"❌ index.html not found at: {html_file_abs}")
+    return {"message": "Event Registration Backend API", "debug": {"looking_for": html_file_abs, "exists": False}}

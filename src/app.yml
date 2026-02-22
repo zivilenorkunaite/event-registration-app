@@ -34,9 +34,10 @@ env:
   - name: ALLOW_EMAIL_REUSE
     value: "true"
 
-# Use Docker to ensure Node.js and Python are available
-docker:
-  path: Dockerfile
+# Startup command for Databricks Apps
+cmd: 
+  - npm
+  - start
 
 # Port to expose (frontend runs on 8000)
 expose_path:
@@ -47,14 +48,16 @@ max_startup_time: 300
 
 # STARTUP PROCEDURE (Databricks App):
 # ====================================
-# This app runs TWO services in a Docker container:
+# This app runs TWO services:
 # 1. Node.js Frontend on port 8000 - Serves registration form static files
 # 2. Python Backend on port 8001  - Handles registrations, printing, Databricks APIs
 #
-# The Dockerfile:
-# - Installs Node.js and Python in the same container
-# - Installs npm dependencies
-# - Installs Python dependencies via pip
-# - Runs npm start which launches start-all.js
+# Entry point: npm start → node start-all.js
 #
-# Entry point: npm start → node start-all.js (manages both services)
+# The start-all.js script will:
+# - Check/install Node.js dependencies
+# - Check/install Python dependencies (handles missing pip)
+# - Start Node.js frontend server
+# - Start Python backend server  
+# - Monitor both services for health
+# - Clean up both on shutdown

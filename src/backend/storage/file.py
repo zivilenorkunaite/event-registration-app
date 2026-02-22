@@ -29,10 +29,10 @@ class FileStorage(StorageBase):
     async def check_email_exists(self, email: str) -> bool:
         """Check if email exists in registrations."""
         registrations = await self._load_registrations()
-        return any(reg.get("email") == email for reg in registrations)
+        return any(reg.get("company_email") == email for reg in registrations)
 
     async def save_registration(
-        self, name: str, email: str, company: str, group: str, location: str
+        self, first_name: str, last_name: str, email: str, company: str, contact_permission: bool = False
     ) -> int:
         """Save registration to JSON file."""
         registrations = await self._load_registrations()
@@ -42,11 +42,11 @@ class FileStorage(StorageBase):
 
         new_registration = {
             "id": reg_id,
-            "name": name,
-            "email": email,
+            "first_name": first_name,
+            "last_name": last_name,
             "company": company,
-            "group": group,
-            "location": location,
+            "company_email": email,
+            "contact_permission": contact_permission,
             "created_at": str(
                 __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
             ),

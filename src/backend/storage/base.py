@@ -33,7 +33,7 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def save_registration(
-        self, name: str, email: str, company: str, group: str, location: str
+        self, first_name: str, last_name: str, email: str, company: str, contact_permission: bool = False
     ) -> int:
         """
         Save a new registration to storage.

@@ -242,11 +242,11 @@ async def register(req: RegistrationRequest):
 
         # Save registration
         reg_id = await storage.save_registration(
-            name=f"{first_name} {last_name}",
+            first_name=first_name,
+            last_name=last_name,
             email=email,
             company=company,
-            group="General",  # TODO: Make this configurable
-            location="General",  # TODO: Make this configurable
+            contact_permission=req.contactPermission,
         )
 
         return {"message": "Check-in successful! Welcome."}

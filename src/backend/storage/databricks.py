@@ -73,16 +73,15 @@ class DeltaStorage(StorageBase):
     async def _ensure_table_exists(self) -> None:
         """Create event_registrations table if it doesn't exist."""
         try:
-            # Note: Databricks Delta doesn't support PRIMARY KEY constraints
-            # Using BIGINT GENERATED ALWAYS AS IDENTITY for auto-incrementing ID
+            # Match the actual table schema in Databricks
             create_table_sql = f"""
             CREATE TABLE IF NOT EXISTS {self.catalog}.{self.schema}.event_registrations (
                 id BIGINT GENERATED ALWAYS AS IDENTITY,
-                name STRING NOT NULL,
-                email STRING NOT NULL,
+                first_name STRING NOT NULL,
+                last_name STRING NOT NULL,
                 company STRING,
-                group_name STRING,
-                location STRING,
+                company_email STRING NOT NULL,
+                contact_permission BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
             );
             """
@@ -132,7 +131,7 @@ class DeltaStorage(StorageBase):
             result = await self.query(
                 f"""
                 SELECT COUNT(*) as count FROM {self.catalog}.{self.schema}.event_registrations
-                WHERE email = ?
+                WHERE company_email = ?
                 """,
                 [email],
             )
@@ -143,21 +142,21 @@ class DeltaStorage(StorageBase):
             raise
 
     async def save_registration(
-        self, name: str, email: str, company: str, group: str, location: str
+        self, first_name: str, last_name: str, email: str, company: str, contact_permission: bool = False
     ) -> int:
         """Save a new registration to Delta Lake."""
         try:
             async def _save():
                 try:
                     cursor = self.connection.cursor()
-                    print(f"   [SaveReg] Saving: {name}, {email}")
+                    print(f"   [SaveReg] Saving: {first_name} {last_name}, {email}")
                     cursor.execute(
                         f"""
                         INSERT INTO {self.catalog}.{self.schema}.event_registrations
-                        (name, email, company, group_name, location)
+                        (first_name, last_name, company, company_email, contact_permission)
                         VALUES (?, ?, ?, ?, ?)
                         """,
-                        [name, email, company, group, location],
+                        [first_name, last_name, company, email, contact_permission],
                     )
                     cursor.close()
                     print(f"   [SaveReg] ✓ Registration saved successfully")
@@ -177,7 +176,7 @@ class DeltaStorage(StorageBase):
     async def get_registrations(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get all registrations from Delta Lake."""
         query = f"""
-            SELECT id, name, email, company, group_name, location, created_at
+            SELECT id, first_name, last_name, company, company_email, contact_permission, created_at
             FROM {self.catalog}.{self.schema}.event_registrations
             ORDER BY created_at DESC
         """

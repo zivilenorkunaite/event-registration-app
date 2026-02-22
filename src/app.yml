@@ -1,8 +1,4 @@
 env:
-  # Databricks App name - used to detect when running in Databricks environment
-  - name: DATABRICKS_APP_NAME
-    value: event-registration
-
   # SQL Warehouse ID for the event registrations table
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: "app-warehouse"

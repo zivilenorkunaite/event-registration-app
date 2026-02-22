@@ -99,9 +99,9 @@ async def initialize_storage() -> None:
     """Initialize storage backend."""
     global storage
 
-    # Determine storage type
-    if os.getenv("DATABRICKS_APP_NAME"):
-        print("🚀 Running in Databricks environment, attempting Delta Lake storage...")
+    # Determine storage type based on available credentials
+    if os.getenv("DATABRICKS_HOST") and os.getenv("DATABRICKS_WAREHOUSE_ID"):
+        print("🚀 Running in Databricks environment with credentials, attempting Delta Lake storage...")
         try:
             storage = DeltaStorage()
             await storage.initialize()
@@ -124,7 +124,7 @@ async def initialize_storage() -> None:
 
         if use_file_storage:
             print(
-                "📁 Running locally, using file-based storage (no PostgreSQL credentials found)."
+                "📁 Running locally, using file-based storage (no Databricks or PostgreSQL credentials found)."
             )
             storage = FileStorage()
         else:

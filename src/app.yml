@@ -28,9 +28,8 @@ env:
 
 # Startup command for Databricks Apps
 cmd:
-  - /bin/sh
-  - -c
-  - cd /app/python/source_code && gunicorn backend.main:app -w 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+  - npm
+  - start
 
 # Port to expose (frontend runs on 8000)
 expose_path:

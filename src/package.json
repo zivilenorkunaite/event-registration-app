@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Event Registration App - FastAPI backend with HTML frontend",
   "scripts": {
+    "start": "cd backend && python3 -m gunicorn main:app -w 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -11,8 +12,8 @@
   "devDependencies": {},
   "comments": [
     "Note: This project is now Python-only with FastAPI + gunicorn.",
-    "Node.js dependencies have been removed.",
+    "Node.js is only used to invoke npm start, which runs: gunicorn backend.main:app",
     "Frontend is served as static HTML by FastAPI.",
-    "To run locally: cd src && gunicorn backend.main:app -w 2 --worker-class uvicorn.workers.UvicornWorker"
+    "All dependencies are in src/backend/requirements.txt"
   ]
 }

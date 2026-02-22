@@ -51,67 +51,106 @@ async function ensurePythonDependencies() {
 
     console.log("📦 Installing Python dependencies...");
 
-    // Try pip3 first, then python3 -m pip, then apt-get to install pip
+    // Try pip3 first, using python3 -m pip as fallback
     const pipInstall = () => {
       return new Promise((resolveInstall, rejectInstall) => {
-        // Try pip3 first
-        const pip = spawn(
-          "pip3",
-          ["install", "-r", "backend/requirements.txt"],
-          {
-            cwd: __dirname,
-            stdio: "inherit",
-            timeout: 120000,
-          },
+        const requirementsFile = path.join(
+          __dirname,
+          "backend",
+          "requirements.txt",
         );
+        console.log(`📝 Using requirements file: ${requirementsFile}`);
+
+        // Try pip3 first
+        console.log("🔧 Attempting: pip3 install -r backend/requirements.txt");
+        const pip = spawn("pip3", ["install", "-r", requirementsFile], {
+          cwd: __dirname,
+          stdio: "inherit",
+          timeout: 120000,
+        });
 
         pip.on("close", (code) => {
           if (code === 0) {
-            console.log("✅ Python dependencies installed");
+            console.log("✅ Python dependencies installed with pip3");
             resolveInstall();
           } else {
             console.log(
-              "⚠️  pip3 install failed, trying alternative method...",
+              `⚠️  pip3 failed with code ${code}, trying python3 -m pip...`,
             );
-            // Fallback: try apt-get to install pip
-            const aptGet = spawn("apt-get", ["update"], {
-              cwd: __dirname,
-              stdio: "inherit",
-            });
+            // Fallback: try python3 -m pip
+            const pythonPip = spawn(
+              "python3",
+              ["-m", "pip", "install", "-r", requirementsFile],
+              {
+                cwd: __dirname,
+                stdio: "inherit",
+              },
+            );
 
-            aptGet.on("close", (aptCode) => {
-              if (aptCode === 0) {
-                console.log("Installing pip via apt-get...");
-                const installPip = spawn(
-                  "apt-get",
-                  ["install", "-y", "python3-pip"],
-                  {
-                    cwd: __dirname,
-                    stdio: "inherit",
-                  },
+            pythonPip.on("close", (pythonCode) => {
+              if (pythonCode === 0) {
+                console.log("✅ Python dependencies installed with python3 -m pip");
+                resolveInstall();
+              } else {
+                console.log(
+                  `⚠️  python3 -m pip failed with code ${pythonCode}, trying apt-get...`,
                 );
+                // Last resort: try apt-get to install pip
+                const aptGet = spawn("apt-get", ["update"], {
+                  cwd: __dirname,
+                  stdio: "inherit",
+                });
 
-                installPip.on("close", (pipInstallCode) => {
-                  if (pipInstallCode === 0) {
-                    // Now try pip install again
-                    console.log("Retrying pip install...");
-                    const retryPip = spawn(
-                      "pip3",
-                      ["install", "-r", "backend/requirements.txt"],
+                aptGet.on("close", (aptCode) => {
+                  if (aptCode === 0) {
+                    console.log("📦 Installing python3-pip via apt-get...");
+                    const installPip = spawn(
+                      "apt-get",
+                      ["install", "-y", "python3-pip"],
                       {
                         cwd: __dirname,
                         stdio: "inherit",
                       },
                     );
 
-                    retryPip.on("close", (retryCode) => {
-                      if (retryCode === 0) {
-                        console.log("✅ Python dependencies installed");
-                        resolveInstall();
+                    installPip.on("close", (pipInstallCode) => {
+                      if (pipInstallCode === 0) {
+                        console.log(
+                          "🔧 Retrying: pip3 install -r backend/requirements.txt",
+                        );
+                        const retryPip = spawn(
+                          "pip3",
+                          ["install", "-r", requirementsFile],
+                          {
+                            cwd: __dirname,
+                            stdio: "inherit",
+                          },
+                        );
+
+                        retryPip.on("close", (retryCode) => {
+                          if (retryCode === 0) {
+                            console.log(
+                              "✅ Python dependencies installed after pip reinstall",
+                            );
+                            resolveInstall();
+                          } else {
+                            rejectInstall(
+                              new Error(
+                                `pip install failed after reinstalling pip (code ${retryCode})`,
+                              ),
+                            );
+                          }
+                        });
+
+                        retryPip.on("error", (err) => {
+                          rejectInstall(
+                            new Error(`Failed to run pip3 retry: ${err.message}`),
+                          );
+                        });
                       } else {
                         rejectInstall(
                           new Error(
-                            `pip install failed after installing pip (code ${retryCode})`,
+                            `apt-get install python3-pip failed (code ${pipInstallCode})`,
                           ),
                         );
                       }
@@ -119,18 +158,16 @@ async function ensurePythonDependencies() {
                   } else {
                     rejectInstall(
                       new Error(
-                        `apt-get install python3-pip failed (code ${pipInstallCode})`,
+                        `apt-get update failed (code ${aptCode}) - cannot install pip`,
                       ),
                     );
                   }
                 });
-              } else {
-                rejectInstall(
-                  new Error(
-                    `apt-get update failed (code ${aptCode}) - cannot install pip`,
-                  ),
-                );
               }
+            });
+
+            pythonPip.on("error", (err) => {
+              rejectInstall(new Error(`Failed to run python3 -m pip: ${err.message}`));
             });
           }
         });

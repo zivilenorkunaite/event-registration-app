@@ -6,9 +6,10 @@
  * It manages both services and ensures they're both healthy before responding.
  */
 
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const path = require("path");
 const http = require("http");
+const fs = require("fs");
 
 const FRONTEND_PORT = process.env.PORT || 8000;
 const BACKEND_PORT = process.env.BACKEND_PORT || 8001;
@@ -18,6 +19,86 @@ const STARTUP_TIMEOUT = 30000; // 30 seconds to start both services
 let frontendProcess = null;
 let backendProcess = null;
 let healthCheckInterval = null;
+
+/**
+ * Ensure Python dependencies are installed
+ */
+async function ensurePythonDependencies() {
+  return new Promise((resolve, reject) => {
+    console.log("📦 Checking Python dependencies...");
+
+    // Check if fastapi is available
+    const checkCmd = spawnSync("python3", ["-c", "import fastapi"], {
+      stdio: "pipe",
+      cwd: __dirname,
+    });
+
+    if (checkCmd.status === 0) {
+      console.log("✅ Python dependencies already installed");
+      resolve();
+      return;
+    }
+
+    const requirementsPath = path.join(__dirname, "backend", "requirements.txt");
+    if (!fs.existsSync(requirementsPath)) {
+      reject(new Error("backend/requirements.txt not found"));
+      return;
+    }
+
+    console.log("📦 Installing Python dependencies...");
+    const pip = spawn("python3", ["-m", "pip", "install", "-q", "-r", "backend/requirements.txt"], {
+      cwd: __dirname,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    pip.on("close", (code) => {
+      if (code === 0) {
+        console.log("✅ Python dependencies installed");
+        resolve();
+      } else {
+        reject(new Error(`pip install failed with code ${code}`));
+      }
+    });
+
+    pip.on("error", (err) => {
+      reject(new Error(`Failed to install Python dependencies: ${err.message}`));
+    });
+  });
+}
+
+/**
+ * Ensure Node.js dependencies are installed
+ */
+async function ensureNodeDependencies() {
+  return new Promise((resolve, reject) => {
+    const nodeModulesPath = path.join(__dirname, "node_modules");
+    
+    if (fs.existsSync(nodeModulesPath)) {
+      console.log("✅ Node.js dependencies already installed");
+      resolve();
+      return;
+    }
+
+    console.log("📦 Installing Node.js dependencies...");
+    const npm = spawn("npm", ["install", "--quiet"], {
+      cwd: __dirname,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    npm.on("close", (code) => {
+      if (code === 0) {
+        console.log("✅ Node.js dependencies installed");
+        resolve();
+      } else {
+        reject(new Error(`npm install failed with code ${code}`));
+      }
+    });
+
+    npm.on("error", (err) => {
+      reject(new Error(`Failed to install Node.js dependencies: ${err.message}`));
+    });
+  });
+}
 
 // Graceful shutdown handler
 async function shutdown(signal) {
@@ -246,6 +327,10 @@ async function main() {
       `📍 Environment: ${process.env.DATABRICKS_APP_NAME ? "Databricks" : "Local Development"}`,
     );
     console.log(`⏱️  Startup timeout: ${STARTUP_TIMEOUT}ms\n`);
+
+    // Ensure all dependencies are installed first
+    await ensureNodeDependencies();
+    await ensurePythonDependencies();
 
     // Start both services with timeout
     const startupPromise = Promise.race([

@@ -55,3 +55,5 @@ Thumbs.db
 # Local development data (don't commit test registrations)
 data/
 registrations.json
+app/backend/data/*.json
+app/backend/data/images/

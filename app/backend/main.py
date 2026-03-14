@@ -2,8 +2,10 @@
 
 import base64
 import json
+import logging
 import os
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -11,7 +13,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -23,7 +25,14 @@ from PIL import Image
 from backend import db
 from backend.services.nametag import generate_nametag_image, LABEL_WIDTH_PX, LABEL_HEIGHT_PX
 
-print("✅ All imports successful")
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger("event_registration.backend.main")
+
+logger.info("Backend module imports completed")
 
 load_dotenv()
 
@@ -54,22 +63,28 @@ EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 NIIMBOT_SERVER_URL = os.getenv("NIIMBOT_SERVER_URL", "").rstrip("/")
 EVENT_NAME = os.getenv("EVENT_NAME", "Energy & Utilities Connect Sydney")
 EVENT_LOCATION = os.getenv("EVENT_LOCATION", "Sydney")
+IS_DATABRICKS_APP = bool(os.getenv("DATABRICKS_APP_NAME"))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage app lifecycle: startup and shutdown."""
-    print("\n🚀 FastAPI startup\n")
+    logger.info(
+        "FastAPI startup | event_name=%s | event_location=%s | queue_table=%s",
+        EVENT_NAME,
+        EVENT_LOCATION,
+        LOCAL_AGENT_QUEUE_TABLE or "<unset>",
+    )
     
     try:
         await db.init_connection()
-        print("✅ App startup complete\n")
+        logger.info("App startup complete")
     except Exception as e:
-        print(f"⚠️  Database connection failed (will retry on first request): {e}\n")
+        logger.warning("Database init failed at startup; will retry on demand | error=%s", e)
     
     yield
     
-    print("\n📴 FastAPI shutdown\n")
+    logger.info("FastAPI shutdown")
     await db.close_connection()
 
 
@@ -100,13 +115,13 @@ for candidate in root_candidates:
     abs_path = os.path.abspath(candidate)
     if os.path.isdir(abs_path):
         frontend_dir = abs_path
-        print(f"✅ Found frontend files at {abs_path}")
+        logger.info("Found frontend directory | path=%s", abs_path)
         break
 
 if frontend_dir:
     app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
 else:
-    print(f"⚠️  Frontend directory not found in {root_candidates}")
+    logger.warning("Frontend directory not found | candidates=%s", root_candidates)
 
 
 IMAGES_DIR = Path(app_dir) / "data" / "images"
@@ -114,8 +129,48 @@ IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 LOCAL_REGISTRATIONS_FILE = Path(app_dir) / "data" / "registrations.json"
 LOCAL_PRINT_JOBS_FILE = Path(app_dir) / "data" / "print_jobs.json"
+LOCAL_AGENT_QUEUE_TABLE = os.getenv("LOCAL_AGENT_QUEUE_TABLE", "").strip()
 
 app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log request lifecycle for easier Databricks runtime debugging."""
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+    start = time.perf_counter()
+    logger.info(
+        "request.start | id=%s | method=%s | path=%s | client=%s",
+        request_id,
+        request.method,
+        request.url.path,
+        request.client.host if request.client else "unknown",
+    )
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        logger.exception(
+            "request.error | id=%s | method=%s | path=%s | duration_ms=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            duration_ms,
+        )
+        raise
+
+    duration_ms = int((time.perf_counter() - start) * 1000)
+    logger.info(
+        "request.end | id=%s | method=%s | path=%s | status=%s | duration_ms=%s",
+        request_id,
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
 def _get_next_image_counter(images_dir: Path) -> int:
@@ -155,7 +210,7 @@ def _load_local_registrations() -> list[dict]:
             if isinstance(data, list):
                 return data
     except Exception as exc:
-        print(f"⚠️ Failed to read local registrations: {exc}")
+        logger.warning("Failed to read local registrations | error=%s", exc)
 
     return []
 
@@ -171,7 +226,7 @@ def _load_local_print_jobs() -> list[dict]:
             if isinstance(data, list):
                 return data
     except Exception as exc:
-        print(f"⚠️ Failed to read local print jobs: {exc}")
+        logger.warning("Failed to read local print jobs | error=%s", exc)
 
     return []
 
@@ -237,7 +292,169 @@ def _enqueue_local_print_job(
         }
     )
     _save_local_print_jobs(print_jobs)
+    logger.info("Queued local print job | job_id=%s | registration_id=%s", job_id, registration_id)
     return job_id
+
+
+def _is_valid_table_identifier(table_name: str) -> bool:
+    """Allow only simple 3-part UC identifiers: catalog.schema.table."""
+    return bool(re.match(r"^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$", table_name or ""))
+
+
+def _should_enqueue_to_table() -> bool:
+    """Use Databricks queue table when Databricks credentials + queue table are present."""
+    return bool(
+        not db._use_file_storage
+        and
+        os.getenv("DATABRICKS_HOST")
+        and os.getenv("DATABRICKS_WAREHOUSE_ID")
+        and LOCAL_AGENT_QUEUE_TABLE
+        and _is_valid_table_identifier(LOCAL_AGENT_QUEUE_TABLE)
+    )
+
+
+async def _enqueue_databricks_print_job(
+    print_payload: dict,
+    registration_id: Optional[int],
+    name_display: str,
+    company_val: str,
+    group: str,
+    location: str,
+    png_filename: str,
+) -> str:
+    """Insert one local-agent-compatible print job record into Databricks queue table."""
+    if not _is_valid_table_identifier(LOCAL_AGENT_QUEUE_TABLE):
+        raise RuntimeError(
+            "LOCAL_AGENT_QUEUE_TABLE must be a valid 3-part identifier (catalog.schema.table)"
+        )
+
+    if db._connection is None:
+        await db.init_connection()
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    job_id = f"job_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}_{uuid.uuid4().hex[:8]}"
+
+    try:
+        max_attempts = int(os.getenv("LOCAL_AGENT_DEFAULT_MAX_ATTEMPTS", "5"))
+    except ValueError:
+        max_attempts = 5
+
+    printer_id = os.getenv("LOCAL_AGENT_PRINTER_ID") or os.getenv("NIIMBOT_ADDRESS") or None
+
+    payload = {
+        "printRequest": print_payload,
+        "registrationId": registration_id,
+        "name": name_display,
+        "company": company_val,
+        "groupName": group,
+        "location": location,
+        "filename": png_filename,
+    }
+
+    payload_json = json.dumps(payload, ensure_ascii=False)
+
+    query = f"""
+        INSERT INTO {LOCAL_AGENT_QUEUE_TABLE}
+        (
+            job_id,
+            status,
+            payload_json,
+            created_at,
+            updated_at,
+            attempt_count,
+            max_attempts,
+            next_attempt_at,
+            printer_id,
+            claimed_by,
+            claimed_at,
+            claim_expires_at,
+            printed_at,
+            error_message
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    await db.execute_query(
+        query,
+        [
+            job_id,
+            "queued",
+            payload_json,
+            now_iso,
+            now_iso,
+            0,
+            max(1, max_attempts),
+            None,
+            printer_id,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ],
+    )
+
+    logger.info(
+        "Queued Databricks print job | table=%s | job_id=%s | registration_id=%s",
+        LOCAL_AGENT_QUEUE_TABLE,
+        job_id,
+        registration_id,
+    )
+    return job_id
+
+
+async def _enqueue_print_job(
+    print_payload: dict,
+    registration_id: Optional[int],
+    name_display: str,
+    company_val: str,
+    group: str,
+    location: str,
+    png_filename: str,
+) -> str:
+    """Enqueue print job to Databricks queue table (preferred) or local JSON queue."""
+    if IS_DATABRICKS_APP:
+        if not _is_valid_table_identifier(LOCAL_AGENT_QUEUE_TABLE):
+            raise RuntimeError(
+                "Databricks App mode requires LOCAL_AGENT_QUEUE_TABLE "
+                "as a valid 3-part identifier (catalog.schema.table)."
+            )
+        logger.info(
+            "Queue strategy selected | target=databricks_table | table=%s | mode=delta_only",
+            LOCAL_AGENT_QUEUE_TABLE,
+        )
+        return await _enqueue_databricks_print_job(
+            print_payload=print_payload,
+            registration_id=registration_id,
+            name_display=name_display,
+            company_val=company_val,
+            group=group,
+            location=location,
+            png_filename=png_filename,
+        )
+
+    if _should_enqueue_to_table():
+        logger.info("Queue strategy selected | target=databricks_table | table=%s", LOCAL_AGENT_QUEUE_TABLE)
+        return await _enqueue_databricks_print_job(
+            print_payload=print_payload,
+            registration_id=registration_id,
+            name_display=name_display,
+            company_val=company_val,
+            group=group,
+            location=location,
+            png_filename=png_filename,
+        )
+
+    logger.info("Queue strategy selected | target=local_file | file=%s", str(LOCAL_PRINT_JOBS_FILE))
+    return _enqueue_local_print_job(
+        print_payload=print_payload,
+        registration_id=registration_id,
+        name_display=name_display,
+        company_val=company_val,
+        group=group,
+        location=location,
+        png_filename=png_filename,
+    )
 
 
 def _find_latest_nametag_for_first_name(first_name: str) -> Optional[str]:
@@ -271,11 +488,13 @@ def _get_first_name_for_match(registration: dict) -> str:
 async def _check_printer_available() -> dict:
     """Check whether printer service is reachable and printer can be connected."""
     if not NIIMBOT_SERVER_URL:
+        logger.info("Printer unavailable | reason=NIIMBOT_SERVER_URL not configured")
         return {"available": False, "reason": "NIIMBOT_SERVER_URL is not configured."}
 
     transport = os.getenv("NIIMBOT_TRANSPORT")
     address = os.getenv("NIIMBOT_ADDRESS")
     if not transport or not address:
+        logger.info("Printer unavailable | reason=transport/address not configured")
         return {
             "available": False,
             "reason": "NIIMBOT_TRANSPORT or NIIMBOT_ADDRESS is not configured.",
@@ -290,6 +509,7 @@ async def _check_printer_available() -> dict:
             connect_text = connect_res.text or ""
 
             if connect_res.status_code == 200 or "Already connected" in connect_text:
+                logger.info("Printer reachable | transport=%s | address=%s", transport, address)
                 return {"available": True, "reason": "Printer is reachable."}
 
             return {
@@ -297,6 +517,7 @@ async def _check_printer_available() -> dict:
                 "reason": f"Connect failed: {connect_text or connect_res.status_code}",
             }
     except Exception as exc:
+        logger.warning("Printer check failed | error=%s", exc)
         return {"available": False, "reason": f"Printer service unreachable: {exc}"}
 
 
@@ -315,6 +536,7 @@ def sanitize_input(text: str, max_length: int = 255) -> str:
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
+    logger.info("Health check requested")
     return {"status": "ok"}
 
 
@@ -334,6 +556,7 @@ async def printer_status():
 @app.get("/api/config")
 async def app_config():
     """Get frontend config values loaded from environment."""
+    logger.info("Config endpoint requested")
     return {
         "eventName": EVENT_NAME,
         "eventLocation": EVENT_LOCATION,
@@ -363,6 +586,7 @@ async def register(req: RegistrationRequest):
         raise HTTPException(status_code=400, detail="Invalid email format.")
 
     try:
+        logger.info("Registration attempt | email_domain=%s", (req.email.split("@")[-1] if "@" in req.email else "invalid"))
         # Ensure connection is initialized (retry on first request)
         if db._connection is None:
             await db.init_connection()
@@ -370,6 +594,7 @@ async def register(req: RegistrationRequest):
         # Check if email already exists
         exists = await db.check_email_exists(email)
         if exists:
+            logger.info("Registration already exists | email_domain=%s", (email.split("@")[-1] if "@" in email else "invalid"))
             return {"message": "Check-in successful! Welcome back."}
 
         # Save registration
@@ -389,7 +614,7 @@ async def register(req: RegistrationRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Registration error: {type(e).__name__}: {e}")
+        logger.exception("Registration error | error_type=%s | error=%s", type(e).__name__, e)
         raise HTTPException(
             status_code=500,
             detail=f"Registration failed: {str(e)}",
@@ -410,6 +635,7 @@ async def print_nametag(req: PrintRequest):
     location = (req.location or EVENT_LOCATION).strip()
 
     try:
+        logger.info("Print request received | registration_id=%s | first_name_len=%s", req.registrationId, len(req.firstName or ""))
         # Generate PNG image
         image_buffer = generate_nametag_image(
             {
@@ -430,7 +656,7 @@ async def print_nametag(req: PrintRequest):
             try:
                 await db.attach_nametag_filename(req.registrationId, png_filename)
             except Exception as exc:
-                print(f"⚠️ Could not attach nametag filename to registration: {exc}")
+                logger.warning("Could not attach nametag filename | registration_id=%s | error=%s", req.registrationId, exc)
 
         # Default print payload: generated image exactly as saved.
         print_buffer = image_buffer
@@ -450,7 +676,7 @@ async def print_nametag(req: PrintRequest):
                     print_label_width = LABEL_HEIGHT_PX
                     print_label_height = LABEL_WIDTH_PX
             except Exception as rotate_exc:
-                print(f"⚠️ Portrait rotation failed, printing original orientation: {rotate_exc}")
+                logger.warning("Portrait rotation failed; using original orientation | error=%s", rotate_exc)
 
         image_base64 = base64.b64encode(print_buffer).decode()
         print_payload = {
@@ -464,7 +690,7 @@ async def print_nametag(req: PrintRequest):
 
         queue_job_id: Optional[str] = None
         try:
-            queue_job_id = _enqueue_local_print_job(
+            queue_job_id = await _enqueue_print_job(
                 print_payload=print_payload,
                 registration_id=req.registrationId,
                 name_display=name_display,
@@ -475,7 +701,7 @@ async def print_nametag(req: PrintRequest):
             )
         except Exception as queue_exc:
             # Keep current user flow unchanged if queue-write fails.
-            print(f"⚠️ Failed to enqueue local print job: {queue_exc}")
+            logger.warning("Failed to enqueue print job | error=%s", queue_exc)
 
         printer = await _check_printer_available()
 
@@ -492,12 +718,13 @@ async def print_nametag(req: PrintRequest):
 
                     if print_res.status_code == 200:
                         printed = True
+                        logger.info("Printer accepted print job | registration_id=%s", req.registrationId)
                     else:
                         printer_message = f"Printer rejected job: {print_res.text}"
-                        print(f"❌ Print failed: {print_res.text}")
+                        logger.warning("Printer rejected job | status=%s | body=%s", print_res.status_code, print_res.text)
             except Exception as exc:
                 printer_message = f"Printer error: {exc}"
-                print(f"❌ Print error: {exc}")
+                logger.warning("Printer request failed | error=%s", exc)
         else:
             printer_message = printer["reason"]
 
@@ -527,7 +754,7 @@ async def print_nametag(req: PrintRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Print error: {e}")
+        logger.exception("Unhandled print error | error=%s", e)
         raise HTTPException(
             status_code=500,
             detail="An error occurred while printing the name tag.",
@@ -543,16 +770,23 @@ async def get_registrations(limit: Optional[int] = None):
             await db.init_connection()
         
         registrations = await db.get_registrations(limit=limit)
+        logger.info("Fetched registrations | count=%s | limit=%s", len(registrations), limit)
         return {"registrations": registrations, "count": len(registrations)}
     except Exception as e:
-        print(f"❌ Failed to fetch registrations: {e}")
+        logger.exception("Failed to fetch registrations | error=%s", e)
         raise HTTPException(status_code=500, detail=f"Failed to fetch registrations: {str(e)}")
 
 
 @app.get("/api/admin/attendees")
 async def get_admin_attendees():
-    """Admin attendees list from local JSON storage with nametag image links."""
-    registrations = _load_local_registrations()
+    """Admin attendees list with nametag image links."""
+    if IS_DATABRICKS_APP:
+        if db._connection is None:
+            await db.init_connection()
+        registrations = await db.get_registrations(limit=None)
+    else:
+        registrations = _load_local_registrations()
+
     attendees: list[dict] = []
 
     for registration in registrations:
@@ -570,6 +804,7 @@ async def get_admin_attendees():
         )
 
     attendees.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
+    logger.info("Fetched admin attendees | count=%s", len(attendees))
     return {"attendees": attendees, "count": len(attendees)}
 
 
@@ -579,7 +814,9 @@ async def root():
     for candidate in root_candidates:
         html_file = os.path.join(candidate, "index.html")
         if os.path.exists(html_file):
+            logger.info("Serving root HTML | path=%s", html_file)
             return FileResponse(html_file, media_type="text/html")
+    logger.warning("Root HTML not found; returning API fallback message")
     return {"message": "Event Registration Backend API"}
 
 
@@ -589,5 +826,7 @@ async def admin_page():
     for candidate in root_candidates:
         html_file = os.path.join(candidate, "admin.html")
         if os.path.exists(html_file):
+            logger.info("Serving admin HTML | path=%s", html_file)
             return FileResponse(html_file, media_type="text/html")
+    logger.warning("Admin HTML not found")
     raise HTTPException(status_code=404, detail="Admin page not found")

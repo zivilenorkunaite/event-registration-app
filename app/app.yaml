@@ -1,19 +1,27 @@
 command:
-  - "npm"
-  - "start"
+  - "uvicorn"
+  - "backend.main:app"
+  - "--app-dir"
+  - "."
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
 
 env:
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: "app-warehouse"
   - name: DATABRICKS_CATALOG
-    value: main
+    value: "main"
   - name: DATABRICKS_SCHEMA
-    value: default
-  - name: DATABRICKS_HOST
-    valueFrom: "app-host"
-  - name: DATABRICKS_CLIENT_ID
-    valueFrom: "app-client-id"
-  - name: DATABRICKS_CLIENT_SECRET
-    valueFrom: "app-client-secret"
+    value: "default"
+  - name: DATABRICKS_VOLUME_PATH
+    valueFrom: "app-volume"
+  - name: EVENT_NAME
+    value: "Energy & Utilities Data Connect"
+  - name: EVENT_LOCATION
+    value: "Sydney"
+  - name: LOCAL_AGENT_QUEUE_TABLE
+    value: "main.default.print_jobs"
   - name: PORT
     value: "8000"

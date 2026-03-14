@@ -453,15 +453,60 @@
               Fill in your details to check in and get your name tag.
             </p>
 
-            <form id="registrationForm">
+            <form
+              id="registrationForm"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              data-lpignore="true"
+            >
+              <input
+                type="text"
+                name="username"
+                autocomplete="username"
+                tabindex="-1"
+                aria-hidden="true"
+                style="
+                  position: absolute;
+                  left: -10000px;
+                  top: auto;
+                  width: 1px;
+                  height: 1px;
+                  opacity: 0;
+                  pointer-events: none;
+                "
+              />
+              <input
+                type="password"
+                name="password"
+                autocomplete="current-password"
+                tabindex="-1"
+                aria-hidden="true"
+                style="
+                  position: absolute;
+                  left: -10000px;
+                  top: auto;
+                  width: 1px;
+                  height: 1px;
+                  opacity: 0;
+                  pointer-events: none;
+                "
+              />
               <div class="form-grid">
                 <div class="form-field">
                   <label for="firstName">First Name *</label>
                   <input
                     type="text"
                     id="firstName"
-                    name="firstName"
+                    name="reg_field_a"
                     placeholder="Jane"
+                    autocomplete="new-password"
+                    autocapitalize="words"
+                    autocorrect="off"
+                    spellcheck="false"
+                    data-lpignore="true"
+                    readonly
                     required
                   />
                 </div>
@@ -470,8 +515,14 @@
                   <input
                     type="text"
                     id="lastName"
-                    name="lastName"
+                    name="reg_field_b"
                     placeholder="Smith"
+                    autocomplete="new-password"
+                    autocapitalize="words"
+                    autocorrect="off"
+                    spellcheck="false"
+                    data-lpignore="true"
+                    readonly
                     required
                   />
                 </div>
@@ -480,8 +531,14 @@
                   <input
                     type="text"
                     id="company"
-                    name="company"
+                    name="reg_field_c"
                     placeholder="Acme Energy"
+                    autocomplete="new-password"
+                    autocapitalize="words"
+                    autocorrect="off"
+                    spellcheck="false"
+                    data-lpignore="true"
+                    readonly
                     required
                   />
                 </div>
@@ -490,8 +547,14 @@
                   <input
                     type="email"
                     id="email"
-                    name="email"
+                    name="reg_field_d"
                     placeholder="jane@example.com"
+                    autocomplete="new-password"
+                    autocapitalize="off"
+                    autocorrect="off"
+                    spellcheck="false"
+                    data-lpignore="true"
+                    readonly
                     required
                   />
                 </div>
@@ -577,7 +640,9 @@
       );
       const nameTagContent = document.getElementById("nameTagPreview");
       const firstNameInput = document.getElementById("firstName");
+      const lastNameInput = document.getElementById("lastName");
       const companyInput = document.getElementById("company");
+      const emailInput = document.getElementById("email");
       const API_BASE =
         window.location.port === "8080"
           ? `${window.location.protocol}//${window.location.hostname}:8000`
@@ -710,8 +775,23 @@
         });
       }
 
+      function enableManualInput(event) {
+        const target = event.target;
+        if (target && target.hasAttribute("readonly")) {
+          target.removeAttribute("readonly");
+        }
+      }
+
       firstNameInput.addEventListener("input", updatePreview);
       companyInput.addEventListener("input", updatePreview);
+      [firstNameInput, lastNameInput, companyInput, emailInput].forEach(
+        (input) => {
+          input.addEventListener("focus", enableManualInput, { once: true });
+          input.addEventListener("pointerdown", enableManualInput, {
+            once: true,
+          });
+        },
+      );
       loadFrontendConfig();
       refreshPrinterStatus();
       updatePreview();
@@ -724,10 +804,10 @@
         messageDiv.className = "";
 
         const data = {
-          firstName: form.firstName.value,
-          lastName: form.lastName.value,
-          company: form.company.value,
-          email: form.email.value,
+          firstName: firstNameInput.value,
+          lastName: lastNameInput.value,
+          company: companyInput.value,
+          email: emailInput.value,
           contactPermission: form.contactPermission.checked,
         };
 

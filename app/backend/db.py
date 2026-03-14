@@ -2,16 +2,33 @@
 
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from databricks import sql
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger("event_registration.backend.db")
+
 # Global connection
 _connection = None
 _use_file_storage = False  # Flag to use JSON file when Databricks unavailable
 _data_file = Path(__file__).parent / "data" / "registrations.json"
+
+
+def _is_databricks_app() -> bool:
+    """Return True when running inside a Databricks App deployment."""
+    return bool(os.getenv("DATABRICKS_APP_NAME"))
+
+
+def _is_delta_only_mode() -> bool:
+    """Databricks App deployments must use Delta tables and never local JSON."""
+    return _is_databricks_app()
 
 
 def _load_registrations() -> List[Dict[str, Any]]:
@@ -36,19 +53,24 @@ async def init_connection():
     global _connection, _use_file_storage
     
     if _connection is not None:
-        print("✅ Connection already initialized")
+        logger.info("Database connection already initialized")
         return
     
     host = os.getenv("DATABRICKS_HOST")
     warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
     
     if not host or not warehouse_id:
-        print("⚠️  No Databricks credentials, using file storage fallback")
+        if _is_delta_only_mode():
+            raise RuntimeError(
+                "Delta table mode is required in Databricks App. "
+                "Missing DATABRICKS_HOST or DATABRICKS_WAREHOUSE_ID."
+            )
+        logger.warning("Databricks credentials missing; using file storage fallback")
         _use_file_storage = True
         return
     
     try:
-        print(f"🔌 Connecting to Databricks: {host}")
+        logger.info("Connecting to Databricks | host=%s | warehouse_id_present=%s", host, bool(warehouse_id))
         
         kwargs = {
             "server_hostname": host,
@@ -60,28 +82,45 @@ async def init_connection():
         client_secret = os.getenv("DATABRICKS_CLIENT_SECRET")
         
         if client_id and client_secret:
-            print("   Using OAuth M2M authentication")
+            logger.info("Using OAuth M2M authentication for Databricks SQL")
             kwargs["auth_type"] = "oauth-m2m"
             kwargs["client_id"] = client_id
             kwargs["client_secret"] = client_secret
         else:
-            print("   Using default Databricks authentication")
+            logger.info("Using default Databricks authentication")
         
-        # Run connection in thread pool to avoid blocking
-        _connection = await asyncio.to_thread(sql.connect, **kwargs)
-        print("✅ Connected to Databricks successfully")
+        # Run connection in thread pool to avoid blocking and fail fast if auth is interactive.
+        _connection = await asyncio.wait_for(asyncio.to_thread(sql.connect, **kwargs), timeout=12)
+        logger.info("Connected to Databricks successfully")
         
     except Exception as e:
-        print(f"❌ Connection failed: {e}")
-        raise
+        if _is_delta_only_mode():
+            logger.exception(
+                "Databricks connection failed in Delta-only mode | error=%s",
+                e,
+            )
+            raise RuntimeError(
+                "Unable to connect to Databricks in Delta-only mode. "
+                "JSON fallback is disabled when DATABRICKS_APP_NAME is set."
+            ) from e
+        logger.warning(
+            "Databricks connection unavailable; falling back to file storage | error=%s",
+            e,
+        )
+        _connection = None
+        _use_file_storage = True
+        return
 
 
 async def execute_query(query: str, params: List[Any] = None) -> List[tuple]:
     """Execute a query and return rows."""
     if _connection is None:
         raise RuntimeError("Not connected to Databricks")
+
+    normalized_query = " ".join(query.split())
+    logger.debug("Executing query | sql=%s | has_params=%s", normalized_query[:240], bool(params))
     
-    async def _execute():
+    def _execute():
         cursor = _connection.cursor()
         try:
             if params:
@@ -98,9 +137,13 @@ async def execute_query(query: str, params: List[Any] = None) -> List[tuple]:
 async def check_email_exists(email: str) -> bool:
     """Check if email exists in registrations table."""
     try:
-        if _use_file_storage or _connection is None:
+        if _connection is None:
+            await init_connection()
+
+        if _use_file_storage:
             # Use file storage
             registrations = await asyncio.to_thread(_load_registrations)
+            logger.debug("Email exists check via file storage | records=%s", len(registrations))
             return any(r.get("company_email", "").lower() == email.lower() for r in registrations)
         
         rows = await execute_query(
@@ -109,7 +152,7 @@ async def check_email_exists(email: str) -> bool:
         )
         return len(rows) > 0
     except Exception as e:
-        print(f"❌ check_email_exists failed: {e}")
+        logger.exception("check_email_exists failed | error=%s", e)
         raise
 
 
@@ -122,7 +165,10 @@ async def save_registration(
 ) -> int:
     """Save registration to Databricks or file storage."""
     try:
-        if _use_file_storage or _connection is None:
+        if _connection is None:
+            await init_connection()
+
+        if _use_file_storage:
             # Use file storage
             registrations = await asyncio.to_thread(_load_registrations)
 
@@ -141,6 +187,7 @@ async def save_registration(
                 "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             })
             await asyncio.to_thread(_save_registrations, registrations)
+            logger.info("Saved registration to file storage | id=%s", next_id)
             return next_id
         
         await execute_query(
@@ -151,16 +198,20 @@ async def save_registration(
             """,
             [first_name, last_name, company, email, contact_permission]
         )
+        logger.info("Saved registration to Databricks table")
         return 1  # Success
     except Exception as e:
-        print(f"❌ save_registration failed: {e}")
+        logger.exception("save_registration failed | error=%s", e)
         raise
 
 
 async def attach_nametag_filename(registration_id: int, nametag_filename: str) -> None:
     """Persist nametag image filename on a registration record."""
     try:
-        if _use_file_storage or _connection is None:
+        if _connection is None:
+            await init_connection()
+
+        if _use_file_storage:
             registrations = await asyncio.to_thread(_load_registrations)
             updated = False
 
@@ -172,8 +223,9 @@ async def attach_nametag_filename(registration_id: int, nametag_filename: str) -
 
             if updated:
                 await asyncio.to_thread(_save_registrations, registrations)
+                logger.info("Attached nametag filename in file storage | registration_id=%s", registration_id)
             else:
-                print(f"⚠️ Registration id {registration_id} not found for nametag attachment")
+                logger.warning("Registration not found for nametag attachment | registration_id=%s", registration_id)
             return
 
         await execute_query(
@@ -184,21 +236,26 @@ async def attach_nametag_filename(registration_id: int, nametag_filename: str) -
             """,
             [nametag_filename, registration_id],
         )
+        logger.info("Attached nametag filename in Databricks | registration_id=%s", registration_id)
     except Exception as e:
-        print(f"❌ attach_nametag_filename failed: {e}")
+        logger.exception("attach_nametag_filename failed | registration_id=%s | error=%s", registration_id, e)
         raise
 
 
 async def get_registrations(limit: Optional[int] = None) -> List[Dict[str, Any]]:
     """Get all registrations from Databricks or file storage."""
     try:
-        if _use_file_storage or _connection is None:
+        if _connection is None:
+            await init_connection()
+
+        if _use_file_storage:
             # Use file storage
             registrations = await asyncio.to_thread(_load_registrations)
             # Sort by created_at descending
             registrations.sort(key=lambda r: r.get("created_at", 0), reverse=True)
             if limit:
                 registrations = registrations[:limit]
+            logger.info("Fetched registrations from file storage | count=%s | limit=%s", len(registrations), limit)
             return registrations
         
         query = "SELECT id, first_name, last_name, company, company_email, contact_permission, created_at FROM main.default.event_registrations ORDER BY created_at DESC"
@@ -209,9 +266,10 @@ async def get_registrations(limit: Optional[int] = None) -> List[Dict[str, Any]]
         
         # Convert tuples to dicts
         columns = ["id", "first_name", "last_name", "company", "company_email", "contact_permission", "created_at"]
+        logger.info("Fetched registrations from Databricks | count=%s | limit=%s", len(rows), limit)
         return [dict(zip(columns, row)) for row in rows]
     except Exception as e:
-        print(f"❌ get_registrations failed: {e}")
+        logger.exception("get_registrations failed | error=%s", e)
         raise
 
 
@@ -221,4 +279,4 @@ async def close_connection():
     if _connection:
         await asyncio.to_thread(_connection.close)
         _connection = None
-        print("✅ Database connection closed")
+        logger.info("Database connection closed")

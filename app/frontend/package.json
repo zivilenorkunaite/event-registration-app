@@ -3,15 +3,20 @@
   "version": "1.0.0",
   "description": "Event Registration App - FastAPI backend with HTML frontend",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext .js,.jsx"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "devDependencies": {},
+  "devDependencies": {
+    "vite": "^8.0.0"
+  },
   "comments": [
     "Note: This project is now Python-only with FastAPI + gunicorn.",
-    "Node.js is only used to invoke npm start, which runs: gunicorn backend.main:app",
+    "Node.js is only used to invoke npm start, which runs gunicorn with FastAPI.",
     "Frontend is served as static HTML by FastAPI.",
     "All dependencies are in src/backend/requirements.txt"
   ]

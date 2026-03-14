@@ -1,0 +1,21 @@
+command:
+  - "npm"
+  - "start"
+
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: "app-warehouse"
+  - name: DATABRICKS_CATALOG
+    value: main
+  - name: DATABRICKS_SCHEMA
+    value: default
+  - name: DATABRICKS_HOST
+    valueFrom: "app-host"
+  - name: DATABRICKS_CLIENT_ID
+    valueFrom: "app-client-id"
+  - name: DATABRICKS_CLIENT_SECRET
+    valueFrom: "app-client-secret"
+  - name: PORT
+    value: "8000"
+  - name: ALLOW_EMAIL_REUSE
+    value: "true"

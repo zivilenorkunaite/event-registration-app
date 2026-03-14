@@ -19,6 +19,7 @@ A simple event registration application built with Node.js, Express, and Postgre
 ## Setup
 
 1. **Install dependencies:**
+
    ```bash
    npm install
    ```
@@ -43,16 +44,17 @@ A simple event registration application built with Node.js, Express, and Postgre
      DB_PORT=5432
      PORT=8000
      ```
-   
+
    **Note:** The app automatically detects if PostgreSQL credentials are provided. If not, it falls back to file-based storage. The app uses `dotenv` to automatically load environment variables from `.env` file in local development. In production (e.g., Databricks Apps), set these variables in your deployment environment.
 
 ## Running Locally
 
 1. **Start the server:**
+
    ```bash
    npm start
    ```
-   
+
    The app will automatically:
    - Use file-based storage if no PostgreSQL credentials are found
    - Use PostgreSQL if credentials are provided in `.env` file
@@ -63,6 +65,7 @@ A simple event registration application built with Node.js, Express, and Postgre
 ### File-based Storage
 
 When using file-based storage:
+
 - All registrations are stored in `./data/registrations.json`
 - No database setup required
 - Data persists between server restarts
@@ -71,6 +74,7 @@ When using file-based storage:
 ## Database Schema
 
 The app expects a table named `event_registrations` with the following structure:
+
 - `id` (SERIAL PRIMARY KEY)
 - `first_name` (VARCHAR)
 - `last_name` (VARCHAR)
@@ -109,14 +113,51 @@ event-registration-app/
 
 ## Printing (Niimbot B3S)
 
-Name tag printing uses **@mmote/niimbluelib** and generates a 80mm × 50mm landscape image. To send to a Niimbot printer:
+Name tag printing uses **@mmote/niimbluelib** and generates an env-configured landscape image. Current default is **70mm × 40mm** (`NIIMBOT_LABEL_WIDTH_MM`, `NIIMBOT_LABEL_HEIGHT_MM`) and is converted to printer-safe pixels.
+
+### Quick start scripts
+
+App only (backend + frontend, no printer):
+
+```bash
+bash scripts/start_quick_app.sh
+```
+
+All services (printer + backend + frontend, no test print):
+
+```bash
+bash scripts/start_quick_all.sh
+```
+
+### One-command local startup (recommended)
+
+1. Copy the config template:
+   ```bash
+   cp .env.example .env
+   ```
+2. Edit `.env` and set `NIIMBOT_ADDRESS`.
+   - On macOS, use the Bluetooth device name (for example `B3S-XXXXXXXXXX`), not a MAC address.
+3. Run:
+   ```bash
+   bash scripts/start_local_print.sh
+   ```
+
+For automatic startup + immediate test label:
+
+```bash
+bash scripts/start_local_print_with_test.sh
+```
+
+This starts the niimblue server, connects your printer, and starts FastAPI on `http://localhost:8000`.
+
+### Manual startup
 
 1. **Run the niimblue-node server** (uses niimbluelib):
    ```bash
-   npx niimblue-cli server
+   npx -y @mmote/niimblue-node server
    ```
 2. **Connect to your printer** (via the server’s `/connect` or CLI).
-3. **Configure env** (optional): set `NIIMBOT_SERVER_URL=http://localhost:5000`, and optionally `NIIMBOT_TRANSPORT`, `NIIMBOT_ADDRESS`, `NIIMBOT_PRINT_TASK`. See `.env.example`.
+3. **Configure env** (optional): set `NIIMBOT_SERVER_URL=http://localhost:5050`, and optionally `NIIMBOT_TRANSPORT`, `NIIMBOT_ADDRESS`, `NIIMBOT_PRINT_TASK`. See `.env.example`.
 
 If `NIIMBOT_SERVER_URL` is not set, the app still generates the name tag image and returns success (no printer is used).
 

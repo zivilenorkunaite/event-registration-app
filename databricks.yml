@@ -10,8 +10,8 @@ resources:
     event-registration-app:
       # The user-facing name of the app in the Databricks UI.
       name: "event-registration-app"
-      source_code_path: ./src
-      # Runtime configuration is now specified in src/app.yaml
+      source_code_path: ./app
+      # Runtime configuration is specified in app/app.yaml
       # Resources this app requires access to
       resources:
         - name: "app-warehouse"

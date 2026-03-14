@@ -1,17 +1,36 @@
 """Simple Databricks database connection and operations."""
 
 import asyncio
+import json
 import os
 from databricks import sql
 from typing import List, Dict, Any, Optional
+from pathlib import Path
 
 # Global connection
 _connection = None
+_use_file_storage = False  # Flag to use JSON file when Databricks unavailable
+_data_file = Path(__file__).parent.parent.parent / "data" / "registrations.json"
+
+
+def _load_registrations() -> List[Dict[str, Any]]:
+    """Load registrations from JSON file."""
+    if _data_file.exists():
+        with open(_data_file, "r") as f:
+            return json.load(f)
+    return []
+
+
+def _save_registrations(registrations: List[Dict[str, Any]]):
+    """Save registrations to JSON file."""
+    _data_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(_data_file, "w") as f:
+        json.dump(registrations, f, indent=2, default=str)
 
 
 async def init_connection():
     """Initialize Databricks connection once at startup."""
-    global _connection
+    global _connection, _use_file_storage
     
     if _connection is not None:
         print("✅ Connection already initialized")
@@ -22,6 +41,7 @@ async def init_connection():
     
     if not host or not warehouse_id:
         print("⚠️  No Databricks credentials, using file storage fallback")
+        _use_file_storage = True
         return
     
     try:
@@ -75,6 +95,11 @@ async def execute_query(query: str, params: List[Any] = None) -> List[tuple]:
 async def check_email_exists(email: str) -> bool:
     """Check if email exists in registrations table."""
     try:
+        if _use_file_storage or _connection is None:
+            # Use file storage
+            registrations = await asyncio.to_thread(_load_registrations)
+            return any(r.get("company_email", "").lower() == email.lower() for r in registrations)
+        
         rows = await execute_query(
             "SELECT 1 FROM main.default.event_registrations WHERE company_email = ? LIMIT 1",
             [email]
@@ -92,8 +117,22 @@ async def save_registration(
     company: str, 
     contact_permission: bool = False
 ) -> int:
-    """Save registration to Databricks."""
+    """Save registration to Databricks or file storage."""
     try:
+        if _use_file_storage or _connection is None:
+            # Use file storage
+            registrations = await asyncio.to_thread(_load_registrations)
+            registrations.append({
+                "first_name": first_name,
+                "last_name": last_name,
+                "company": company,
+                "company_email": email,
+                "contact_permission": contact_permission,
+                "created_at": asyncio.get_event_loop().time(),
+            })
+            await asyncio.to_thread(_save_registrations, registrations)
+            return 1
+        
         await execute_query(
             """
             INSERT INTO main.default.event_registrations 
@@ -109,8 +148,17 @@ async def save_registration(
 
 
 async def get_registrations(limit: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Get all registrations."""
+    """Get all registrations from Databricks or file storage."""
     try:
+        if _use_file_storage or _connection is None:
+            # Use file storage
+            registrations = await asyncio.to_thread(_load_registrations)
+            # Sort by created_at descending
+            registrations.sort(key=lambda r: r.get("created_at", 0), reverse=True)
+            if limit:
+                registrations = registrations[:limit]
+            return registrations
+        
         query = "SELECT id, first_name, last_name, company, company_email, contact_permission, created_at FROM main.default.event_registrations ORDER BY created_at DESC"
         if limit:
             query += f" LIMIT {limit}"

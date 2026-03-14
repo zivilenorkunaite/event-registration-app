@@ -6,6 +6,7 @@ import os
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +17,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import httpx
 from dotenv import load_dotenv
+from PIL import Image
 
 from backend import db
 from backend.services.nametag import generate_nametag_image, LABEL_WIDTH_PX, LABEL_HEIGHT_PX
@@ -360,15 +362,31 @@ async def print_nametag(req: PrintRequest):
         printer_message = ""
 
         if printer["available"]:
-            image_base64 = base64.b64encode(image_buffer).decode()
+            print_buffer = image_buffer
+            print_label_width = LABEL_WIDTH_PX
+            print_label_height = LABEL_HEIGHT_PX
+
+            if LABEL_HEIGHT_PX > LABEL_WIDTH_PX:
+                try:
+                    with Image.open(BytesIO(image_buffer)) as portrait_img:
+                        rotated = portrait_img.rotate(-90, expand=True)
+                        rotated_buffer = BytesIO()
+                        rotated.save(rotated_buffer, format="PNG")
+                        print_buffer = rotated_buffer.getvalue()
+                        print_label_width = LABEL_HEIGHT_PX
+                        print_label_height = LABEL_WIDTH_PX
+                except Exception as rotate_exc:
+                    print(f"⚠️ Portrait rotation failed, printing original orientation: {rotate_exc}")
+
+            image_base64 = base64.b64encode(print_buffer).decode()
             try:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
                     print_res = await client.post(
                         f"{NIIMBOT_SERVER_URL}/print",
                         json={
                             "imageBase64": image_base64,
-                            "labelWidth": LABEL_WIDTH_PX,
-                            "labelHeight": LABEL_HEIGHT_PX,
+                            "labelWidth": print_label_width,
+                            "labelHeight": print_label_height,
                             "printTask": os.getenv("NIIMBOT_PRINT_TASK", "B1"),
                             "printDirection": "top",
                             "quantity": 1,

@@ -6,6 +6,7 @@ builds a few diagnostic PNG patterns, and sends them to the printer.
 
 import base64
 import json
+import os
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -13,14 +14,18 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = "http://localhost:5050"
-TRANSPORT = "ble"
-ADDRESS = "B3S_P-HA15010590"
+TRANSPORT = os.getenv("NIIMBOT_TRANSPORT", "ble")
+ADDRESS = os.getenv("NIIMBOT_ADDRESS", "")
 OUT_DIR = ROOT / "app" / "backend" / "data" / "images"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def connect_printer():
     """Attempt a one-time connect call before sending any print jobs."""
+    if not ADDRESS:
+        print("connect NIIMBOT_ADDRESS is not set; skipping connect")
+        return
+
     req = Request(
         SERVER + "/connect",
         data=json.dumps({"transport": TRANSPORT, "address": ADDRESS}).encode("utf-8"),

@@ -4,13 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Admin · Attendees</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
     <style>
+      @font-face {
+        font-family: "Inter";
+        src: url("/fonts/Inter-Regular.ttf") format("truetype");
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+      }
+
+      @font-face {
+        font-family: "Inter";
+        src: url("/fonts/Inter-Bold.ttf") format("truetype");
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+      }
+
       :root {
         --brand-navy: #1a3a5c;
         --brand-navy-dark: #112640;
@@ -40,6 +50,8 @@
 
       body {
         font-family:
+          "Verdana",
+          "Geneva",
           "Inter",
           system-ui,
           -apple-system,

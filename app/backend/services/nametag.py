@@ -6,6 +6,37 @@ import os
 from typing import Optional
 
 
+_FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+_BUNDLED_FONT_PATHS = {
+    "regular": [os.path.join(_FONT_DIR, "Inter-Regular.ttf")],
+    "bold": [
+        os.path.join(_FONT_DIR, "Inter-Bold.ttf"),
+        os.path.join(_FONT_DIR, "Inter-Regular.ttf"),
+    ],
+}
+_SYSTEM_FONT_PATHS = {
+    "regular": [
+        "/System/Library/Fonts/Supplemental/Verdana.ttf",  # macOS
+        "/Windows/Fonts/verdana.ttf",  # Windows
+        "/System/Library/Fonts/Helvetica.ttc",  # macOS
+        "/Windows/Fonts/arial.ttf",  # Windows
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",  # Linux alternative
+    ],
+    "bold": [
+        "/System/Library/Fonts/Supplemental/Verdana Bold.ttf",  # macOS
+        "/Windows/Fonts/verdanab.ttf",  # Windows
+        "/System/Library/Fonts/Helvetica.ttc",  # macOS
+        "/Windows/Fonts/arialbd.ttf",  # Windows
+        "/Windows/Fonts/arial.ttf",  # Windows fallback
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Linux
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux fallback
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",  # Linux alternative
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",  # Linux fallback
+    ],
+}
+
+
 def _align_to_multiple_of_8(value: int) -> int:
     """Align integer pixel value to the next multiple of 8."""
     return ((value + 7) // 8) * 8
@@ -53,16 +84,15 @@ def _measure_text(font: ImageFont.FreeTypeFont, text: str) -> tuple[int, int]:
     return right - left, bottom - top
 
 
-def get_font(size: int) -> ImageFont.FreeTypeFont:
-    """Get a TrueType font of specified size. Falls back to default if not available."""
+def get_font(size: int, weight: str = "regular") -> ImageFont.FreeTypeFont:
+    """Get a font of specified size and weight, preferring Verdana when available."""
     try:
-        # Try common system font paths
-        font_paths = [
-            "/System/Library/Fonts/Helvetica.ttc",  # macOS
-            "/Windows/Fonts/arial.ttf",  # Windows
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",  # Linux alternative
-        ]
+        normalized_weight = "bold" if weight == "bold" else "regular"
+        font_paths = (
+            _SYSTEM_FONT_PATHS.get(normalized_weight, [])
+            + _BUNDLED_FONT_PATHS.get(normalized_weight, [])
+            + _SYSTEM_FONT_PATHS["regular"]
+        )
 
         for font_path in font_paths:
             if os.path.exists(font_path):
@@ -80,17 +110,18 @@ def _fit_font_for_box(
     max_height: int,
     max_size: int,
     min_size: int,
+    weight: str = "regular",
 ) -> ImageFont.FreeTypeFont:
     """Find the largest available font that fits inside width/height bounds."""
     content = text if text else " "
 
     for size in range(max_size, min_size - 1, -1):
-        font = get_font(size)
+        font = get_font(size, weight=weight)
         text_w, text_h = _measure_text(font, content)
         if text_w <= max_width and text_h <= max_height:
             return font
 
-    return get_font(min_size)
+    return get_font(min_size, weight=weight)
 
 
 def _draw_centered_in_band(
@@ -104,6 +135,7 @@ def _draw_centered_in_band(
     max_size: int,
     min_size: int,
     max_height_ratio: float = 1.0,
+    weight: str = "regular",
 ) -> None:
     """Draw centered text in a horizontal band using best-fit font size."""
     band_height = max(1, bottom - top)
@@ -114,6 +146,7 @@ def _draw_centered_in_band(
         max_height=fitted_max_height,
         max_size=max_size,
         min_size=min_size,
+        weight=weight,
     )
     draw.text((width // 2, top + band_height // 2), text, fill=text_color, font=font, anchor="mm")
 
@@ -173,6 +206,7 @@ def generate_nametag_image(opts: dict) -> bytes:
         max_size=26,
         min_size=10,
         max_height_ratio=0.78,
+        weight="bold",
     )
     _draw_centered_in_band(
         draw=draw,
@@ -185,6 +219,7 @@ def generate_nametag_image(opts: dict) -> bytes:
         max_size=18,
         min_size=9,
         max_height_ratio=0.78,
+        weight="regular",
     )
 
     # ── Name zone ─────────────────────────────────────────────────────────────
@@ -202,6 +237,7 @@ def generate_nametag_image(opts: dict) -> bytes:
         max_size=300,
         min_size=28,
         max_height_ratio=0.70,
+        weight="bold",
     )
 
     # ── Separator & company footer ────────────────────────────────────────────
@@ -218,6 +254,7 @@ def generate_nametag_image(opts: dict) -> bytes:
         max_size=60,
         min_size=12,
         max_height_ratio=0.75,
+        weight="regular",
     )
 
     # Convert to PNG buffer

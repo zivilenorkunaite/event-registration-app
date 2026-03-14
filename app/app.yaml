@@ -17,5 +17,3 @@ env:
     valueFrom: "app-client-secret"
   - name: PORT
     value: "8000"
-  - name: ALLOW_EMAIL_REUSE
-    value: "true"

@@ -140,7 +140,6 @@ See `.env.example` for the full list.
 
 ### Core
 
-- `ALLOW_EMAIL_REUSE=true|false`
 - `EVENT_NAME`
 - `EVENT_LOCATION`
 

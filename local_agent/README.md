@@ -74,6 +74,8 @@ NIIMBOT_PRINT_DIRECTION=top
 
 Minimal practical values:
 
+- `LOCAL_AGENT_LOCAL_RUN` = `true` to read local JSON queue instead of Databricks table
+- `LOCAL_AGENT_LOCAL_QUEUE_FILE` = local queue path (default `app/backend/data/print_jobs.json`)
 - `LOCAL_AGENT_QUEUE_TABLE` = queue table name used by your app
 - `LOCAL_AGENT_ID` = unique identifier for this machine (for example `onsite-agent-1`)
 - `LOCAL_AGENT_PRINTER_ID` = same as `NIIMBOT_ADDRESS` on this machine
@@ -103,6 +105,8 @@ UI supports:
 - view queued count and recent jobs
 
 If the UI shows no jobs, confirm the queue table and printer targeting (`printer_id`) match this agent.
+
+When `LOCAL_AGENT_LOCAL_RUN=true`, queue table settings are ignored and jobs are read from the local JSON queue file.
 
 ## Required queue table assumptions
 

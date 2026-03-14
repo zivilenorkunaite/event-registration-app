@@ -24,7 +24,10 @@ from local_agent import (
 
 st.set_page_config(page_title="Local Print Agent", layout="wide")
 st.title("Local Print Agent")
-st.caption("Runs on your local machine, polls Databricks queue, prints via local niimblue bridge.")
+st.caption(
+    "Runs on your local machine and prints via local niimblue bridge "
+    "(queue source: local JSON or Databricks)."
+)
 
 
 @st.cache_resource(show_spinner=False)
@@ -44,8 +47,11 @@ left, right = st.columns([1, 1])
 
 with left:
     st.subheader("Configuration")
+    queue_source = "local_json" if cfg.local_run else "databricks"
     st.write(
         {
+            "queue_source": queue_source,
+            "local_queue_file": cfg.local_queue_file if cfg.local_run else "<not used>",
             "queue_table": cfg.queue_table,
             "agent_id": cfg.agent_id,
             "printer_id_filter": cfg.printer_id or "<none>",

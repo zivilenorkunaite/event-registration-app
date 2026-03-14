@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from io import BytesIO
@@ -50,7 +51,6 @@ class PrintRequest(BaseModel):
 
 # Global configuration
 EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-ALLOW_EMAIL_REUSE = os.getenv("ALLOW_EMAIL_REUSE", "true").lower() != "false"
 NIIMBOT_SERVER_URL = os.getenv("NIIMBOT_SERVER_URL", "").rstrip("/")
 EVENT_NAME = os.getenv("EVENT_NAME", "Energy & Utilities Connect Sydney")
 EVENT_LOCATION = os.getenv("EVENT_LOCATION", "Sydney")
@@ -113,6 +113,7 @@ IMAGES_DIR = Path(app_dir) / "data" / "images"
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 LOCAL_REGISTRATIONS_FILE = Path(app_dir) / "data" / "registrations.json"
+LOCAL_PRINT_JOBS_FILE = Path(app_dir) / "data" / "print_jobs.json"
 
 app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
 
@@ -157,6 +158,86 @@ def _load_local_registrations() -> list[dict]:
         print(f"⚠️ Failed to read local registrations: {exc}")
 
     return []
+
+
+def _load_local_print_jobs() -> list[dict]:
+    """Load local print queue jobs from JSON file."""
+    if not LOCAL_PRINT_JOBS_FILE.exists():
+        return []
+
+    try:
+        with LOCAL_PRINT_JOBS_FILE.open("r", encoding="utf-8") as file_handle:
+            data = json.load(file_handle)
+            if isinstance(data, list):
+                return data
+    except Exception as exc:
+        print(f"⚠️ Failed to read local print jobs: {exc}")
+
+    return []
+
+
+def _save_local_print_jobs(print_jobs: list[dict]) -> None:
+    """Persist local print queue jobs to JSON file."""
+    LOCAL_PRINT_JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with LOCAL_PRINT_JOBS_FILE.open("w", encoding="utf-8") as file_handle:
+        json.dump(print_jobs, file_handle, indent=2, ensure_ascii=False)
+
+
+def _enqueue_local_print_job(
+    print_payload: dict,
+    registration_id: Optional[int],
+    name_display: str,
+    company_val: str,
+    group: str,
+    location: str,
+    png_filename: str,
+) -> str:
+    """Append one local-agent-compatible print job record to local JSON queue."""
+    print_jobs = _load_local_print_jobs()
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    job_id = f"job_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}_{uuid.uuid4().hex[:8]}"
+
+    try:
+        max_attempts = int(os.getenv("LOCAL_AGENT_DEFAULT_MAX_ATTEMPTS", "5"))
+    except ValueError:
+        max_attempts = 5
+
+    printer_id = (
+        os.getenv("LOCAL_AGENT_PRINTER_ID")
+        or os.getenv("NIIMBOT_ADDRESS")
+        or None
+    )
+
+    payload = {
+        "printRequest": print_payload,
+        "registrationId": registration_id,
+        "name": name_display,
+        "company": company_val,
+        "groupName": group,
+        "location": location,
+        "filename": png_filename,
+    }
+
+    print_jobs.append(
+        {
+            "job_id": job_id,
+            "status": "queued",
+            "payload_json": json.dumps(payload, ensure_ascii=False),
+            "created_at": now_iso,
+            "updated_at": now_iso,
+            "attempt_count": 0,
+            "max_attempts": max(1, max_attempts),
+            "next_attempt_at": None,
+            "printer_id": printer_id,
+            "claimed_by": None,
+            "claimed_at": None,
+            "claim_expires_at": None,
+            "printed_at": None,
+            "error_message": None,
+        }
+    )
+    _save_local_print_jobs(print_jobs)
+    return job_id
 
 
 def _find_latest_nametag_for_first_name(first_name: str) -> Optional[str]:
@@ -289,11 +370,6 @@ async def register(req: RegistrationRequest):
         # Check if email already exists
         exists = await db.check_email_exists(email)
         if exists:
-            if not ALLOW_EMAIL_REUSE:
-                raise HTTPException(
-                    status_code=409,
-                    detail="You're already checked in with this email.",
-                )
             return {"message": "Check-in successful! Welcome back."}
 
         # Save registration
@@ -356,45 +432,62 @@ async def print_nametag(req: PrintRequest):
             except Exception as exc:
                 print(f"⚠️ Could not attach nametag filename to registration: {exc}")
 
+        # Default print payload: generated image exactly as saved.
+        print_buffer = image_buffer
+        print_label_width = LABEL_WIDTH_PX
+        print_label_height = LABEL_HEIGHT_PX
+
+        if LABEL_HEIGHT_PX > LABEL_WIDTH_PX:
+            # Portrait labels (e.g. 50x80) are rotated for printer output only.
+            # Saved images and browser previews intentionally stay unrotated.
+            try:
+                with Image.open(BytesIO(image_buffer)) as portrait_img:
+                    rotated = portrait_img.rotate(-90, expand=True)
+                    rotated_buffer = BytesIO()
+                    rotated.save(rotated_buffer, format="PNG")
+                    # Printer receives landscape-oriented pixels + swapped dimensions.
+                    print_buffer = rotated_buffer.getvalue()
+                    print_label_width = LABEL_HEIGHT_PX
+                    print_label_height = LABEL_WIDTH_PX
+            except Exception as rotate_exc:
+                print(f"⚠️ Portrait rotation failed, printing original orientation: {rotate_exc}")
+
+        image_base64 = base64.b64encode(print_buffer).decode()
+        print_payload = {
+            "imageBase64": image_base64,
+            "labelWidth": print_label_width,
+            "labelHeight": print_label_height,
+            "printTask": os.getenv("NIIMBOT_PRINT_TASK", "B1"),
+            "printDirection": "top",
+            "quantity": 1,
+        }
+
+        queue_job_id: Optional[str] = None
+        try:
+            queue_job_id = _enqueue_local_print_job(
+                print_payload=print_payload,
+                registration_id=req.registrationId,
+                name_display=name_display,
+                company_val=company_val,
+                group=group,
+                location=location,
+                png_filename=png_filename,
+            )
+        except Exception as queue_exc:
+            # Keep current user flow unchanged if queue-write fails.
+            print(f"⚠️ Failed to enqueue local print job: {queue_exc}")
+
         printer = await _check_printer_available()
 
         printed = False
         printer_message = ""
 
         if printer["available"]:
-            # Default behavior: print the generated image exactly as saved.
-            print_buffer = image_buffer
-            print_label_width = LABEL_WIDTH_PX
-            print_label_height = LABEL_HEIGHT_PX
-
-            if LABEL_HEIGHT_PX > LABEL_WIDTH_PX:
-                # Portrait labels (e.g. 50x80) are rotated for printer output only.
-                # Saved images and browser previews intentionally stay unrotated.
-                try:
-                    with Image.open(BytesIO(image_buffer)) as portrait_img:
-                        rotated = portrait_img.rotate(-90, expand=True)
-                        rotated_buffer = BytesIO()
-                        rotated.save(rotated_buffer, format="PNG")
-                        # Printer receives landscape-oriented pixels + swapped dimensions.
-                        print_buffer = rotated_buffer.getvalue()
-                        print_label_width = LABEL_HEIGHT_PX
-                        print_label_height = LABEL_WIDTH_PX
-                except Exception as rotate_exc:
-                    print(f"⚠️ Portrait rotation failed, printing original orientation: {rotate_exc}")
-
-            image_base64 = base64.b64encode(print_buffer).decode()
             try:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
                     print_res = await client.post(
                         f"{NIIMBOT_SERVER_URL}/print",
-                        json={
-                            "imageBase64": image_base64,
-                            "labelWidth": print_label_width,
-                            "labelHeight": print_label_height,
-                            "printTask": os.getenv("NIIMBOT_PRINT_TASK", "B1"),
-                            "printDirection": "top",
-                            "quantity": 1,
-                        },
+                        json=print_payload,
                     )
 
                     if print_res.status_code == 200:
@@ -427,6 +520,7 @@ async def print_nametag(req: PrintRequest):
                 "name": name_display,
                 "company": company_val,
                 "registrationId": req.registrationId,
+                "queueJobId": queue_job_id,
             },
         }
 

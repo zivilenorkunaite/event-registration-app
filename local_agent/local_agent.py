@@ -8,6 +8,7 @@ sends it to a local Niimbot print bridge, and updates job status.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -15,6 +16,7 @@ import socket
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -49,6 +51,8 @@ class AgentConfig:
     token: str
 
     queue_table: str
+    local_run: bool
+    local_queue_file: str
     printer_id: str
     agent_id: str
 
@@ -85,13 +89,19 @@ def load_config() -> AgentConfig:
     client_id = os.getenv("DATABRICKS_CLIENT_ID", "").strip()
     client_secret = os.getenv("DATABRICKS_CLIENT_SECRET", "").strip()
     token = os.getenv("DATABRICKS_TOKEN", "").strip()
+    local_run = _env_bool("LOCAL_AGENT_LOCAL_RUN", False)
+    local_queue_file = os.getenv(
+        "LOCAL_AGENT_LOCAL_QUEUE_FILE",
+        "app/backend/data/print_jobs.json",
+    ).strip()
 
-    if not host or not warehouse_id:
-        raise RuntimeError("DATABRICKS_HOST and DATABRICKS_WAREHOUSE_ID are required")
-    if not token and not (client_id and client_secret):
-        raise RuntimeError(
-            "Set DATABRICKS_TOKEN OR both DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET"
-        )
+    if not local_run:
+        if not host or not warehouse_id:
+            raise RuntimeError("DATABRICKS_HOST and DATABRICKS_WAREHOUSE_ID are required")
+        if not token and not (client_id and client_secret):
+            raise RuntimeError(
+                "Set DATABRICKS_TOKEN OR both DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET"
+            )
 
     default_agent_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
 
@@ -102,6 +112,8 @@ def load_config() -> AgentConfig:
         client_secret=client_secret,
         token=token,
         queue_table=os.getenv("LOCAL_AGENT_QUEUE_TABLE", "main.default.print_jobs").strip(),
+        local_run=local_run,
+        local_queue_file=local_queue_file,
         printer_id=os.getenv("LOCAL_AGENT_PRINTER_ID", "").strip(),
         agent_id=os.getenv("LOCAL_AGENT_ID", default_agent_id).strip(),
         poll_seconds=max(1, _env_int("LOCAL_AGENT_POLL_SECONDS", 2)),
@@ -123,6 +135,9 @@ def load_config() -> AgentConfig:
 
 
 def connect_databricks(cfg: AgentConfig):
+    if cfg.local_run:
+        return contextlib.nullcontext(None)
+
     kwargs: dict[str, Any] = {
         "server_hostname": cfg.host,
         "http_path": f"/sql/1.0/warehouses/{cfg.warehouse_id}",
@@ -148,7 +163,116 @@ def fetch_one(cursor, query: str, params: list[Any]) -> Optional[tuple[Any, ...]
     return row
 
 
+def _queue_file_path(cfg: AgentConfig) -> Path:
+    candidate = Path(cfg.local_queue_file)
+    if candidate.is_absolute():
+        return candidate
+    repo_root = Path(__file__).resolve().parents[1]
+    return (repo_root / candidate).resolve()
+
+
+def _load_local_queue(cfg: AgentConfig) -> list[dict[str, Any]]:
+    queue_file = _queue_file_path(cfg)
+    if not queue_file.exists():
+        return []
+
+    with queue_file.open("r", encoding="utf-8") as file_handle:
+        data = json.load(file_handle)
+        if isinstance(data, list):
+            return data
+    return []
+
+
+def _save_local_queue(cfg: AgentConfig, jobs: list[dict[str, Any]]) -> None:
+    queue_file = _queue_file_path(cfg)
+    queue_file.parent.mkdir(parents=True, exist_ok=True)
+    with queue_file.open("w", encoding="utf-8") as file_handle:
+        json.dump(jobs, file_handle, indent=2, ensure_ascii=False)
+
+
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _to_iso_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _eligible_local_job(job: dict[str, Any], cfg: AgentConfig, now: datetime) -> bool:
+    if str(job.get("status") or "") != "queued":
+        return False
+
+    if cfg.printer_id:
+        printer_id = job.get("printer_id")
+        if printer_id not in (None, "", cfg.printer_id):
+            return False
+
+    next_attempt_at = _parse_iso_datetime(job.get("next_attempt_at"))
+    if next_attempt_at and next_attempt_at > now:
+        return False
+
+    claim_expires_at = _parse_iso_datetime(job.get("claim_expires_at"))
+    if claim_expires_at and claim_expires_at > now:
+        return False
+
+    return True
+
+
+def _local_sort_key(job: dict[str, Any], key_name: str) -> str:
+    value = job.get(key_name)
+    if value is None:
+        return ""
+    return str(value)
+
+
 def claim_next_job(conn, cfg: AgentConfig) -> Optional[ClaimedJob]:
+    if cfg.local_run:
+        jobs = _load_local_queue(cfg)
+        now = datetime.now(timezone.utc)
+        eligible = [job for job in jobs if _eligible_local_job(job, cfg, now)]
+        if not eligible:
+            return None
+
+        eligible.sort(key=lambda item: _local_sort_key(item, "created_at"))
+        candidate = eligible[0]
+        job_id = str(candidate.get("job_id") or "")
+        if not job_id:
+            return None
+
+        for job in jobs:
+            if str(job.get("job_id") or "") != job_id:
+                continue
+            if str(job.get("status") or "") != "queued":
+                return None
+
+            job["status"] = "claimed"
+            job["claimed_by"] = cfg.agent_id
+            job["claimed_at"] = _to_iso_z(now)
+            job["claim_expires_at"] = _to_iso_z(now + timedelta(seconds=cfg.claim_ttl_seconds))
+            job["updated_at"] = _to_iso_z(now)
+            _save_local_queue(cfg, jobs)
+
+            return ClaimedJob(
+                job_id=job_id,
+                payload_json=str(job.get("payload_json") or "{}"),
+                attempt_count=int(job.get("attempt_count") or 0),
+                max_attempts=int(job.get("max_attempts") or cfg.default_max_attempts),
+            )
+        return None
+
     with conn.cursor() as cursor:
         if cfg.printer_id:
             select_sql = f"""
@@ -218,6 +342,11 @@ def claim_next_job(conn, cfg: AgentConfig) -> Optional[ClaimedJob]:
 
 
 def count_queued_jobs(conn, cfg: AgentConfig) -> int:
+    if cfg.local_run:
+        jobs = _load_local_queue(cfg)
+        now = datetime.now(timezone.utc)
+        return sum(1 for job in jobs if _eligible_local_job(job, cfg, now))
+
     with conn.cursor() as cursor:
         if cfg.printer_id:
             sql_text = f"""
@@ -242,6 +371,24 @@ def count_queued_jobs(conn, cfg: AgentConfig) -> int:
 
 
 def get_recent_jobs(conn, cfg: AgentConfig, limit: int = 20) -> list[dict[str, Any]]:
+    if cfg.local_run:
+        jobs = _load_local_queue(cfg)
+        jobs.sort(key=lambda item: _local_sort_key(item, "updated_at"), reverse=True)
+        results: list[dict[str, Any]] = []
+        for job in jobs[: max(1, min(limit, 200))]:
+            results.append(
+                {
+                    "job_id": job.get("job_id"),
+                    "status": job.get("status"),
+                    "printer_id": job.get("printer_id"),
+                    "attempt_count": job.get("attempt_count"),
+                    "max_attempts": job.get("max_attempts"),
+                    "updated_at": job.get("updated_at"),
+                    "error_message": job.get("error_message"),
+                }
+            )
+        return results
+
     with conn.cursor() as cursor:
         sql_text = f"""
             SELECT job_id, status, printer_id, attempt_count, max_attempts, updated_at, error_message
@@ -269,6 +416,21 @@ def get_recent_jobs(conn, cfg: AgentConfig, limit: int = 20) -> list[dict[str, A
 
 
 def mark_printing(conn, cfg: AgentConfig, job: ClaimedJob) -> None:
+    if cfg.local_run:
+        jobs = _load_local_queue(cfg)
+        now = datetime.now(timezone.utc)
+        for item in jobs:
+            if str(item.get("job_id") or "") != job.job_id:
+                continue
+            if str(item.get("claimed_by") or "") != cfg.agent_id:
+                return
+            item["status"] = "printing"
+            item["updated_at"] = _to_iso_z(now)
+            item["claim_expires_at"] = _to_iso_z(now + timedelta(seconds=cfg.claim_ttl_seconds))
+            _save_local_queue(cfg, jobs)
+            return
+        return
+
     with conn.cursor() as cursor:
         sql_text = f"""
             UPDATE {cfg.queue_table}
@@ -281,6 +443,23 @@ def mark_printing(conn, cfg: AgentConfig, job: ClaimedJob) -> None:
 
 
 def mark_printed(conn, cfg: AgentConfig, job: ClaimedJob) -> None:
+    if cfg.local_run:
+        jobs = _load_local_queue(cfg)
+        now = datetime.now(timezone.utc)
+        for item in jobs:
+            if str(item.get("job_id") or "") != job.job_id:
+                continue
+            if str(item.get("claimed_by") or "") != cfg.agent_id:
+                return
+            item["status"] = "printed"
+            item["printed_at"] = _to_iso_z(now)
+            item["updated_at"] = _to_iso_z(now)
+            item["error_message"] = None
+            item["claim_expires_at"] = None
+            _save_local_queue(cfg, jobs)
+            return
+        return
+
     with conn.cursor() as cursor:
         sql_text = f"""
             UPDATE {cfg.queue_table}
@@ -300,6 +479,36 @@ def mark_failed(conn, cfg: AgentConfig, job: ClaimedJob, error_message: str) -> 
 
     base_backoff = min(cfg.max_retry_backoff_seconds, 2 ** max(0, job.attempt_count))
     backoff_seconds = max(cfg.poll_seconds, base_backoff)
+
+    if cfg.local_run:
+        jobs = _load_local_queue(cfg)
+        now = datetime.now(timezone.utc)
+        for item in jobs:
+            if str(item.get("job_id") or "") != job.job_id:
+                continue
+            if str(item.get("claimed_by") or "") != cfg.agent_id:
+                return
+
+            if exhausted:
+                item["status"] = "dead"
+                item["attempt_count"] = next_attempt
+                item["updated_at"] = _to_iso_z(now)
+                item["claim_expires_at"] = None
+                item["error_message"] = error_message[:1500]
+                _save_local_queue(cfg, jobs)
+                return
+
+            item["status"] = "queued"
+            item["attempt_count"] = next_attempt
+            item["next_attempt_at"] = _to_iso_z(now + timedelta(seconds=backoff_seconds))
+            item["updated_at"] = _to_iso_z(now)
+            item["claimed_by"] = None
+            item["claimed_at"] = None
+            item["claim_expires_at"] = None
+            item["error_message"] = error_message[:1500]
+            _save_local_queue(cfg, jobs)
+            return
+        return
 
     with conn.cursor() as cursor:
         if exhausted:
@@ -453,10 +662,30 @@ def run() -> None:
     logger = logging.getLogger("local_agent")
 
     logger.info("Starting local print agent")
-    logger.info("Queue table: %s", cfg.queue_table)
+    if cfg.local_run:
+        logger.info("Queue mode: local JSON (%s)", _queue_file_path(cfg))
+    else:
+        logger.info("Queue table: %s", cfg.queue_table)
     logger.info("Agent ID: %s", cfg.agent_id)
     if cfg.printer_id:
         logger.info("Printer routing ID: %s", cfg.printer_id)
+
+    if cfg.local_run:
+        with connect_http_client() as client:
+            while True:
+                try:
+                    message = process_one_job(None, cfg, client, logger)
+                    if message == "No queued jobs available":
+                        time.sleep(cfg.poll_seconds)
+                        continue
+
+                except KeyboardInterrupt:
+                    logger.info("Stopping local print agent")
+                    break
+                except Exception as exc:
+                    logger.exception("Worker loop error: %s", exc)
+                    time.sleep(cfg.poll_seconds)
+        return
 
     conn = connect_databricks(cfg)
     logger.info("Connected to Databricks SQL")

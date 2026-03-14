@@ -163,6 +163,7 @@ If these are unset, app uses local JSON fallback:
 - `DATABRICKS_CATALOG` (optional)
 - `DATABRICKS_SCHEMA` (optional)
 - `DATABRICKS_VOLUME_PATH` (optional)
+- `REGISTRATIONS_TABLE` (optional, default `main.default.event_registrations`)
 
 ### Local agent (optional)
 
@@ -185,6 +186,17 @@ If these are unset, app uses local JSON fallback:
 - **Without Databricks creds**: uses local file storage (`app/backend/data/registrations.json`).
 - Nametag images are saved under `app/backend/data/images` and served from `/images/...`.
 
+### Databricks App check-in path
+
+- In Databricks App mode, `POST /api/register` performs registration + nametag generation/queueing in one backend flow.
+- The frontend uses `printResult` from `POST /api/register` when present and skips the second print request.
+- Registration IDs are app-generated numeric IDs (time-sequence bigint format) to avoid post-insert ID lookups.
+
+### Databricks deploy-time table sync
+
+- `scripts/deploy_databricks_app.sh` now runs `scripts/ensure_databricks_tables.py` before app start.
+- The deploy step ensures both registrations and print queue Delta tables exist and adds any missing required columns.
+
 ---
 
 ## API endpoints
@@ -202,6 +214,7 @@ If these are unset, app uses local JSON fallback:
 
 - `POST /api/register`
   - Body: `{ firstName, lastName, company, email, contactPermission }`
+  - In Databricks App mode, response may include `printResult` with queue/print info.
 - `POST /api/print`
   - Body: `{ firstName, company?, groupName?, location?, registrationId? }`
 
@@ -244,6 +257,8 @@ event-registration-app/
 │   ├── start_quick_all.sh
 │   ├── start_local_print.sh
 │   ├── start_local_print_with_test.sh
+│   ├── deploy_databricks_app.sh
+│   ├── ensure_databricks_tables.py
 │   └── printer_test_direct.py
 └── app/
     ├── requirements.txt

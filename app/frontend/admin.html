@@ -441,10 +441,7 @@
       }
 
       // Keys excluded from table columns and CSV
-      const NAMETAG_KEYS = new Set([
-        "nametag_image_url",
-        "nametag_image_filename",
-      ]);
+      const NAMETAG_KEYS = new Set(["nametag_image_url"]);
 
       function buildOrderedKeys(attendees) {
         const keys = new Set();

@@ -12,16 +12,18 @@ env:
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: "app-warehouse"
   - name: DATABRICKS_CATALOG
-    value: "main"
+    value: 'main'
   - name: DATABRICKS_SCHEMA
-    value: "default"
+    value: 'default'
   - name: DATABRICKS_VOLUME_PATH
     valueFrom: "app-volume"
   - name: EVENT_NAME
-    value: "Energy & Utilities Data Connect"
+    value: 'Energy & Utilities Data Connect'
   - name: EVENT_LOCATION
-    value: "Sydney"
+    value: 'Sydney'
   - name: LOCAL_AGENT_QUEUE_TABLE
-    value: "main.default.print_jobs"
+    value: 'main.default.print_jobs'
+  - name: REGISTRATIONS_TABLE
+    value: 'main.default.event_registrations'
   - name: PORT
     value: "8000"

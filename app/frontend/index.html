@@ -649,6 +649,14 @@
           : "";
       const apiUrl = (path) => `${API_BASE}${path}`;
       let printerAvailable = false;
+      let isDatabricksApp = false;
+
+      async function maybeRefreshPrinterStatus() {
+        if (isDatabricksApp) {
+          return;
+        }
+        await refreshPrinterStatus();
+      }
 
       async function refreshPrinterStatus() {
         try {
@@ -658,6 +666,16 @@
           }
           const status = await response.json();
           printerAvailable = !!status.available;
+
+          if (
+            status?.printingEnabled === false ||
+            status?.mode === "databricks_app"
+          ) {
+            printerStatusFooter.textContent =
+              "Managed mode — check-in, image save, and queueing are active.";
+            printerStatusFooter.className = "printer-status-footer online";
+            return;
+          }
 
           if (printerAvailable) {
             printerStatusFooter.textContent =
@@ -683,11 +701,17 @@
             return;
           }
           const config = await response.json();
+          isDatabricksApp = !!config?.isDatabricksApp;
           if (config?.eventName) {
             previewEventName.textContent = config.eventName;
           }
           if (config?.eventLocation) {
             previewEventLocation.textContent = config.eventLocation;
+          }
+          if (isDatabricksApp) {
+            printerStatusFooter.textContent =
+              "Managed mode — check-in, image save, and queueing are active.";
+            printerStatusFooter.className = "printer-status-footer online";
           }
           const name = config?.eventName || previewEventName.textContent;
           const loc = config?.eventLocation || previewEventLocation.textContent;
@@ -792,14 +816,13 @@
           });
         },
       );
-      loadFrontendConfig();
-      refreshPrinterStatus();
+      loadFrontendConfig().then(maybeRefreshPrinterStatus);
       updatePreview();
       window.addEventListener("resize", updatePreview);
 
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
-        await refreshPrinterStatus();
+        await maybeRefreshPrinterStatus();
         messageDiv.textContent = "Processing...";
         messageDiv.className = "";
 
@@ -821,27 +844,31 @@
           const result = await response.json();
 
           if (response.ok) {
-            const nameTagData = {
-              firstName: data.firstName,
-              company: data.company,
-              groupName: previewEventName.textContent,
-              location: previewEventLocation.textContent,
-              registrationId: result.registrationId || null,
-            };
-
             let didPrint = false;
-            try {
-              const printResponse = await fetch(apiUrl("/api/print"), {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(nameTagData),
-              });
+            if (result?.printResult) {
+              didPrint = !!result?.printResult?.data?.printed;
+            } else {
+              const nameTagData = {
+                firstName: data.firstName,
+                company: data.company,
+                groupName: previewEventName.textContent,
+                location: previewEventLocation.textContent,
+                registrationId: result.registrationId || null,
+              };
 
-              const printResult = await printResponse.json();
-              didPrint = !!printResult?.data?.printed;
-            } catch (printError) {
-              didPrint = false;
-              console.warn("Name tag save/print request failed:", printError);
+              try {
+                const printResponse = await fetch(apiUrl("/api/print"), {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(nameTagData),
+                });
+
+                const printResult = await printResponse.json();
+                didPrint = !!printResult?.data?.printed;
+              } catch (printError) {
+                didPrint = false;
+                console.warn("Name tag save/print request failed:", printError);
+              }
             }
 
             messageDiv.textContent = "";
@@ -853,10 +880,14 @@
               : "Ready for the next attendee.";
             layoutGrid.classList.add("hidden");
             homeScreen.classList.add("active");
-            refreshPrinterStatus();
+            maybeRefreshPrinterStatus();
           } else {
+            const detailMessage =
+              typeof result.detail === "string"
+                ? result.detail
+                : result.detail?.message;
             messageDiv.textContent =
-              result.detail || "An error occurred. Please try again.";
+              detailMessage || "An error occurred. Please try again.";
             messageDiv.className = "error";
           }
         } catch (error) {
@@ -868,7 +899,7 @@
       });
 
       homeCheckInBtn.addEventListener("click", () => {
-        refreshPrinterStatus();
+        maybeRefreshPrinterStatus();
         homeScreen.classList.remove("active");
         layoutGrid.classList.remove("hidden");
         messageDiv.textContent = "";

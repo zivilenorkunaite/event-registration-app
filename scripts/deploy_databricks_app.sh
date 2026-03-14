@@ -17,6 +17,15 @@ if ! command -v databricks >/dev/null 2>&1; then
 fi
 
 DEPLOY_PROFILE="${DATABRICKS_DEPLOY_PROFILE:-DEFAULT}"
+PYTHON_BIN="${PYTHON_BIN:-}"
+
+if [[ -z "$PYTHON_BIN" ]]; then
+  if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+    PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+  else
+    PYTHON_BIN="$(command -v python3)"
+  fi
+fi
 
 set -a
 source "$ENV_FILE"
@@ -48,6 +57,8 @@ event_location_yaml="$(yaml_quote "$EVENT_LOCATION")"
 databricks_catalog_yaml="$(yaml_quote "$DATABRICKS_CATALOG")"
 databricks_schema_yaml="$(yaml_quote "$DATABRICKS_SCHEMA")"
 local_agent_queue_table_yaml="$(yaml_quote "$LOCAL_AGENT_QUEUE_TABLE")"
+registrations_table="${REGISTRATIONS_TABLE:-${DATABRICKS_CATALOG}.${DATABRICKS_SCHEMA}.event_registrations}"
+registrations_table_yaml="$(yaml_quote "$registrations_table")"
 
 echo "Updating $APP_YAML from .env values..."
 cat > "$APP_YAML" <<EOF
@@ -76,6 +87,8 @@ env:
     value: $event_location_yaml
   - name: LOCAL_AGENT_QUEUE_TABLE
     value: $local_agent_queue_table_yaml
+  - name: REGISTRATIONS_TABLE
+    value: $registrations_table_yaml
   - name: PORT
     value: "8000"
 EOF
@@ -83,6 +96,66 @@ EOF
 echo "Deploying Databricks app bundle..."
 cd "$ROOT_DIR"
 databricks bundle deploy -t development --profile "$DEPLOY_PROFILE"
+
+echo "Ensuring Unity Catalog grants for app service principal..."
+app_json="$(databricks apps get event-registration-app --profile "$DEPLOY_PROFILE" -o json)"
+app_principal="$(python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("id", ""))' <<< "$app_json")"
+
+if [[ -z "$app_principal" ]]; then
+  echo "Failed to resolve Databricks app principal ID."
+  exit 1
+fi
+
+schema_full_name="${DATABRICKS_CATALOG}.${DATABRICKS_SCHEMA}"
+volume_full_name="${DATABRICKS_VOLUME_PATH:-}"
+if [[ "$volume_full_name" == /Volumes/* ]]; then
+  volume_full_name="${volume_full_name#/Volumes/}"
+  volume_full_name="${volume_full_name//\//.}"
+fi
+
+if [[ -z "$volume_full_name" || "$volume_full_name" != *.*.* ]]; then
+  echo "Missing or invalid DATABRICKS_VOLUME_PATH in .env. Expected format /Volumes/<catalog>/<schema>/<volume>."
+  exit 1
+fi
+
+schema_grants_file="$(mktemp)"
+cat > "$schema_grants_file" <<EOF
+{
+  "changes": [
+    {
+      "principal": "$app_principal",
+      "add": ["USE_SCHEMA", "CREATE_TABLE", "MODIFY", "SELECT", "READ_VOLUME", "WRITE_VOLUME"]
+    }
+  ]
+}
+EOF
+
+volume_grants_file="$(mktemp)"
+cat > "$volume_grants_file" <<EOF
+{
+  "changes": [
+    {
+      "principal": "$app_principal",
+      "add": ["READ_VOLUME", "WRITE_VOLUME"]
+    }
+  ]
+}
+EOF
+
+databricks grants update SCHEMA "$schema_full_name" --profile "$DEPLOY_PROFILE" --json "@$schema_grants_file"
+databricks grants update VOLUME "$volume_full_name" --profile "$DEPLOY_PROFILE" --json "@$volume_grants_file"
+
+rm -f "$schema_grants_file" "$volume_grants_file"
+
+echo "Ensuring Databricks registration and queue tables exist..."
+if [[ -n "${DATABRICKS_HOST:-}" && -n "${DATABRICKS_WAREHOUSE_ID:-}" ]]; then
+  REGISTRATIONS_TABLE="$registrations_table" \
+  PYTHONPATH="$ROOT_DIR/app" \
+  "$PYTHON_BIN" "$ROOT_DIR/scripts/ensure_databricks_tables.py"
+else
+  echo "Skipping Databricks table sync because DATABRICKS_HOST or DATABRICKS_WAREHOUSE_ID is not set in .env"
+fi
+
 databricks bundle run -t development event-registration-app --profile "$DEPLOY_PROFILE"
 
 echo "Deployment complete."

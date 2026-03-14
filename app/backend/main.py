@@ -1,5 +1,6 @@
 """FastAPI backend server for event registration and name tag printing."""
 
+import asyncio
 import base64
 import json
 import logging
@@ -64,6 +65,24 @@ NIIMBOT_SERVER_URL = os.getenv("NIIMBOT_SERVER_URL", "").rstrip("/")
 EVENT_NAME = os.getenv("EVENT_NAME", "Energy & Utilities Connect Sydney")
 EVENT_LOCATION = os.getenv("EVENT_LOCATION", "Sydney")
 IS_DATABRICKS_APP = bool(os.getenv("DATABRICKS_APP_NAME"))
+DATABRICKS_VOLUME_PATH = os.getenv("DATABRICKS_VOLUME_PATH", "").strip()
+
+
+def _resolve_volume_images_dir(volume_value: str) -> Optional[Path]:
+    """Resolve Databricks volume env value to a writable mounted images directory path."""
+    raw_value = (volume_value or "").strip()
+    if not raw_value:
+        return None
+
+    if raw_value.startswith("/Volumes/"):
+        base_path = Path(raw_value)
+    else:
+        parts = raw_value.split(".")
+        if len(parts) != 3 or not all(parts):
+            return None
+        base_path = Path("/Volumes") / parts[0] / parts[1] / parts[2]
+
+    return base_path / "images"
 
 
 @asynccontextmanager
@@ -124,8 +143,32 @@ else:
     logger.warning("Frontend directory not found | candidates=%s", root_candidates)
 
 
-IMAGES_DIR = Path(app_dir) / "data" / "images"
-IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+_fallback_images_dir = Path(app_dir) / "data" / "images"
+
+if IS_DATABRICKS_APP and DATABRICKS_VOLUME_PATH:
+    _candidate_images_dir = _resolve_volume_images_dir(DATABRICKS_VOLUME_PATH)
+    try:
+        if _candidate_images_dir is None:
+            raise ValueError(
+                "DATABRICKS_VOLUME_PATH must be '/Volumes/<catalog>/<schema>/<volume>' "
+                "or '<catalog>.<schema>.<volume>'"
+            )
+        _candidate_images_dir.mkdir(parents=True, exist_ok=True)
+        IMAGES_DIR = _candidate_images_dir
+        logger.info("Image storage directory configured | target=volume | path=%s", str(IMAGES_DIR))
+    except Exception as volume_exc:
+        _fallback_images_dir.mkdir(parents=True, exist_ok=True)
+        IMAGES_DIR = _fallback_images_dir
+        logger.warning(
+            "Volume image path unavailable; using local fallback | volume_path=%s | fallback=%s | error=%s",
+            DATABRICKS_VOLUME_PATH,
+            str(IMAGES_DIR),
+            volume_exc,
+        )
+else:
+    _fallback_images_dir.mkdir(parents=True, exist_ok=True)
+    IMAGES_DIR = _fallback_images_dir
+    logger.info("Image storage directory configured | target=local | path=%s", str(IMAGES_DIR))
 
 LOCAL_REGISTRATIONS_FILE = Path(app_dir) / "data" / "registrations.json"
 LOCAL_PRINT_JOBS_FILE = Path(app_dir) / "data" / "print_jobs.json"
@@ -301,6 +344,39 @@ def _is_valid_table_identifier(table_name: str) -> bool:
     return bool(re.match(r"^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$", table_name or ""))
 
 
+async def _ensure_queue_table_exists_on_startup() -> None:
+    """Create local-agent queue table once at startup when Databricks queue table is configured."""
+    if not _is_valid_table_identifier(LOCAL_AGENT_QUEUE_TABLE):
+        return
+
+    if db._connection is None:
+        await db.init_connection()
+
+    await db.execute_query(
+        f"""
+        CREATE TABLE IF NOT EXISTS {LOCAL_AGENT_QUEUE_TABLE}
+        (
+            job_id STRING,
+            status STRING,
+            payload_json STRING,
+            created_at TIMESTAMP,
+            updated_at TIMESTAMP,
+            attempt_count INT,
+            max_attempts INT,
+            next_attempt_at TIMESTAMP,
+            printer_id STRING,
+            claimed_by STRING,
+            claimed_at TIMESTAMP,
+            claim_expires_at TIMESTAMP,
+            printed_at TIMESTAMP,
+            error_message STRING
+        )
+        USING DELTA
+        """
+    )
+    logger.info("Ensured queue table exists at startup | table=%s", LOCAL_AGENT_QUEUE_TABLE)
+
+
 def _should_enqueue_to_table() -> bool:
     """Use Databricks queue table when Databricks credentials + queue table are present."""
     return bool(
@@ -321,6 +397,7 @@ async def _enqueue_databricks_print_job(
     group: str,
     location: str,
     png_filename: str,
+    isolated_queue_write: bool = False,
 ) -> str:
     """Insert one local-agent-compatible print job record into Databricks queue table."""
     if not _is_valid_table_identifier(LOCAL_AGENT_QUEUE_TABLE):
@@ -374,7 +451,9 @@ async def _enqueue_databricks_print_job(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
-    await db.execute_query(
+    execute_query = db.execute_query_isolated if isolated_queue_write else db.execute_query
+
+    await execute_query(
         query,
         [
             job_id,
@@ -411,6 +490,7 @@ async def _enqueue_print_job(
     group: str,
     location: str,
     png_filename: str,
+    isolated_queue_write: bool = False,
 ) -> str:
     """Enqueue print job to Databricks queue table (preferred) or local JSON queue."""
     if IS_DATABRICKS_APP:
@@ -431,6 +511,7 @@ async def _enqueue_print_job(
             group=group,
             location=location,
             png_filename=png_filename,
+            isolated_queue_write=isolated_queue_write,
         )
 
     if _should_enqueue_to_table():
@@ -443,6 +524,7 @@ async def _enqueue_print_job(
             group=group,
             location=location,
             png_filename=png_filename,
+            isolated_queue_write=isolated_queue_write,
         )
 
     logger.info("Queue strategy selected | target=local_file | file=%s", str(LOCAL_PRINT_JOBS_FILE))
@@ -485,11 +567,208 @@ def _get_first_name_for_match(registration: dict) -> str:
     return ""
 
 
+async def _cancel_databricks_print_job(job_id: str, error_message: str) -> None:
+    """Best-effort queue rollback for failed combined check-ins."""
+    if not job_id or not _is_valid_table_identifier(LOCAL_AGENT_QUEUE_TABLE):
+        return
+
+    try:
+        await db.execute_query_isolated(
+            f"""
+            UPDATE {LOCAL_AGENT_QUEUE_TABLE}
+            SET status = 'cancelled',
+                updated_at = current_timestamp(),
+                error_message = ?
+            WHERE job_id = ?
+            """,
+            [error_message[:1500], job_id],
+        )
+        logger.info("Cancelled queued print job after failed combined check-in | job_id=%s", job_id)
+    except Exception as exc:
+        logger.warning("Failed to cancel queued print job | job_id=%s | error=%s", job_id, exc)
+
+
+def _build_nametag_artifacts(
+    first_name: str,
+    company_val: str,
+    group: str,
+    location: str,
+    registration_id: Optional[int],
+) -> dict:
+    """Generate image, save it, and prepare the print payload."""
+    name_display = first_name.strip().upper()
+
+    image_buffer = generate_nametag_image(
+        {
+            "name": name_display,
+            "company": company_val,
+            "groupName": group,
+            "location": location,
+        }
+    )
+
+    image_id, png_filename, saved_path = _save_nametag_image(
+        image_buffer,
+        name_display,
+        registration_id=registration_id,
+    )
+
+    print_buffer = image_buffer
+    print_label_width = LABEL_WIDTH_PX
+    print_label_height = LABEL_HEIGHT_PX
+
+    if LABEL_HEIGHT_PX > LABEL_WIDTH_PX:
+        try:
+            with Image.open(BytesIO(image_buffer)) as portrait_img:
+                rotated = portrait_img.rotate(-90, expand=True)
+                rotated_buffer = BytesIO()
+                rotated.save(rotated_buffer, format="PNG")
+                print_buffer = rotated_buffer.getvalue()
+                print_label_width = LABEL_HEIGHT_PX
+                print_label_height = LABEL_WIDTH_PX
+        except Exception as rotate_exc:
+            logger.warning("Portrait rotation failed; using original orientation | error=%s", rotate_exc)
+
+    image_base64 = base64.b64encode(print_buffer).decode()
+    print_payload = {
+        "imageBase64": image_base64,
+        "labelWidth": print_label_width,
+        "labelHeight": print_label_height,
+        "printTask": os.getenv("NIIMBOT_PRINT_TASK", "B1"),
+        "printDirection": "top",
+        "quantity": 1,
+    }
+
+    return {
+        "imageId": image_id,
+        "filename": png_filename,
+        "savedPath": saved_path,
+        "printPayload": print_payload,
+        "groupName": group,
+        "location": location,
+        "name": name_display,
+        "company": company_val,
+        "registrationId": registration_id,
+    }
+
+
+async def _dispatch_nametag(
+    first_name: str,
+    company_val: str,
+    group: str,
+    location: str,
+    registration_id: Optional[int],
+    isolated_queue_write: bool = False,
+) -> dict:
+    """Generate, save, queue, and optionally print a name tag."""
+    artifacts = await asyncio.to_thread(
+        _build_nametag_artifacts,
+        first_name,
+        company_val,
+        group,
+        location,
+        registration_id,
+    )
+
+    queue_job_id: Optional[str] = None
+    queue_error_message = ""
+    try:
+        queue_job_id = await _enqueue_print_job(
+            print_payload=artifacts["printPayload"],
+            registration_id=registration_id,
+            name_display=artifacts["name"],
+            company_val=company_val,
+            group=group,
+            location=location,
+            png_filename=artifacts["filename"],
+            isolated_queue_write=isolated_queue_write,
+        )
+    except Exception as queue_exc:
+        queue_error_message = str(queue_exc)
+        logger.warning("Failed to enqueue print job | error=%s", queue_exc)
+        if IS_DATABRICKS_APP:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to queue print job in {LOCAL_AGENT_QUEUE_TABLE}: {queue_error_message}",
+            )
+
+    printed = False
+    printer_message = ""
+
+    if IS_DATABRICKS_APP:
+        printer_message = "Direct printer calls are disabled in Databricks App mode."
+        logger.info("Direct printer call skipped | mode=databricks_app | registration_id=%s", registration_id)
+    else:
+        printer = await _check_printer_available()
+
+        if printer["available"]:
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
+                    print_res = await client.post(
+                        f"{NIIMBOT_SERVER_URL}/print",
+                        json=artifacts["printPayload"],
+                    )
+
+                    if print_res.status_code == 200:
+                        printed = True
+                        logger.info("Printer accepted print job | registration_id=%s", registration_id)
+                    else:
+                        printer_message = f"Printer rejected job: {print_res.text}"
+                        logger.warning("Printer rejected job | status=%s | body=%s", print_res.status_code, print_res.text)
+            except Exception as exc:
+                printer_message = f"Printer error: {exc}"
+                logger.warning("Printer request failed | error=%s", exc)
+        else:
+            printer_message = printer["reason"]
+
+    message = (
+        "Name tag saved and queued for agent processing."
+        if IS_DATABRICKS_APP and queue_job_id
+        else "Name tag saved, but queueing failed."
+        if IS_DATABRICKS_APP
+        else "Name tag saved and sent to printer successfully."
+        if printed
+        else "Name tag saved. Printer not available, print skipped."
+    )
+
+    return {
+        "message": message,
+        "data": {
+            "imageId": artifacts["imageId"],
+            "filename": artifacts["filename"],
+            "savedPath": artifacts["savedPath"],
+            "printed": printed,
+            "printerMessage": printer_message,
+            "groupName": artifacts["groupName"],
+            "location": artifacts["location"],
+            "name": artifacts["name"],
+            "company": artifacts["company"],
+            "registrationId": registration_id,
+            "queueJobId": queue_job_id,
+            "queueError": queue_error_message or None,
+        },
+    }
+
+
 async def _check_printer_available() -> dict:
     """Check whether printer service is reachable and printer can be connected."""
+    if IS_DATABRICKS_APP:
+        logger.info("Printer check skipped | mode=databricks_app")
+        return {
+            "available": False,
+            "reason": "Direct printer calls are disabled in Databricks App mode.",
+            "printingEnabled": False,
+            "mode": "databricks_app",
+        }
+
     if not NIIMBOT_SERVER_URL:
         logger.info("Printer unavailable | reason=NIIMBOT_SERVER_URL not configured")
-        return {"available": False, "reason": "NIIMBOT_SERVER_URL is not configured."}
+        return {
+            "available": False,
+            "reason": "NIIMBOT_SERVER_URL is not configured.",
+            "printingEnabled": True,
+            "mode": "standard",
+        }
 
     transport = os.getenv("NIIMBOT_TRANSPORT")
     address = os.getenv("NIIMBOT_ADDRESS")
@@ -498,6 +777,8 @@ async def _check_printer_available() -> dict:
         return {
             "available": False,
             "reason": "NIIMBOT_TRANSPORT or NIIMBOT_ADDRESS is not configured.",
+            "printingEnabled": True,
+            "mode": "standard",
         }
 
     try:
@@ -510,15 +791,27 @@ async def _check_printer_available() -> dict:
 
             if connect_res.status_code == 200 or "Already connected" in connect_text:
                 logger.info("Printer reachable | transport=%s | address=%s", transport, address)
-                return {"available": True, "reason": "Printer is reachable."}
+                return {
+                    "available": True,
+                    "reason": "Printer is reachable.",
+                    "printingEnabled": True,
+                    "mode": "standard",
+                }
 
             return {
                 "available": False,
                 "reason": f"Connect failed: {connect_text or connect_res.status_code}",
+                "printingEnabled": True,
+                "mode": "standard",
             }
     except Exception as exc:
         logger.warning("Printer check failed | error=%s", exc)
-        return {"available": False, "reason": f"Printer service unreachable: {exc}"}
+        return {
+            "available": False,
+            "reason": f"Printer service unreachable: {exc}",
+            "printingEnabled": True,
+            "mode": "standard",
+        }
 
 
 def is_valid_email(email: str) -> bool:
@@ -547,6 +840,9 @@ async def printer_status():
     return {
         "available": status["available"],
         "message": status["reason"],
+        "printingEnabled": status.get("printingEnabled", True),
+        "mode": status.get("mode", "standard"),
+        "isDatabricksApp": IS_DATABRICKS_APP,
         "serverUrl": NIIMBOT_SERVER_URL or None,
         "transport": os.getenv("NIIMBOT_TRANSPORT") or None,
         "address": os.getenv("NIIMBOT_ADDRESS") or None,
@@ -560,6 +856,7 @@ async def app_config():
     return {
         "eventName": EVENT_NAME,
         "eventLocation": EVENT_LOCATION,
+        "isDatabricksApp": IS_DATABRICKS_APP,
     }
 
 
@@ -590,31 +887,101 @@ async def register(req: RegistrationRequest):
         # Ensure connection is initialized (retry on first request)
         if db._connection is None:
             await db.init_connection()
-        
-        # Check if email already exists
-        exists = await db.check_email_exists(email)
-        if exists:
-            logger.info("Registration already exists | email_domain=%s", (email.split("@")[-1] if "@" in email else "invalid"))
-            return {"message": "Check-in successful! Welcome back."}
 
-        # Save registration
-        registration_id = await db.save_registration(
-            first_name=first_name,
-            last_name=last_name,
-            email=email,
-            company=company,
-            contact_permission=req.contactPermission,
-        )
+        registration_id = db.generate_registration_id()
+        print_result = None
 
-        return {
+        if IS_DATABRICKS_APP:
+            registration_task = asyncio.create_task(
+                db.save_registration(
+                    first_name=first_name,
+                    last_name=last_name,
+                    email=email,
+                    company=company,
+                    contact_permission=req.contactPermission,
+                    registration_id=registration_id,
+                )
+            )
+            nametag_task = asyncio.create_task(
+                _dispatch_nametag(
+                    first_name=first_name,
+                    company_val=company,
+                    group=EVENT_NAME,
+                    location=EVENT_LOCATION,
+                    registration_id=registration_id,
+                    isolated_queue_write=True,
+                )
+            )
+
+            registration_result, print_result_candidate = await asyncio.gather(
+                registration_task,
+                nametag_task,
+                return_exceptions=True,
+            )
+
+            registration_exc = registration_result if isinstance(registration_result, Exception) else None
+            print_exc = print_result_candidate if isinstance(print_result_candidate, Exception) else None
+
+            if registration_exc or print_exc:
+                queue_job_id = None
+                if isinstance(print_result_candidate, dict):
+                    queue_job_id = print_result_candidate.get("data", {}).get("queueJobId")
+
+                if registration_exc is not None and queue_job_id:
+                    await _cancel_databricks_print_job(
+                        queue_job_id,
+                        f"Registration failed for ID {registration_id}: {registration_exc}",
+                    )
+
+                if print_exc is not None and registration_exc is None:
+                    try:
+                        await db.delete_registration(registration_id)
+                    except Exception as rollback_exc:
+                        logger.warning(
+                            "Registration rollback failed after queue/print error | registration_id=%s | error=%s",
+                            registration_id,
+                            rollback_exc,
+                        )
+
+                if registration_exc is not None:
+                    raise registration_exc
+                raise print_exc
+
+            print_result = print_result_candidate
+        else:
+            registration_id = await db.save_registration(
+                first_name=first_name,
+                last_name=last_name,
+                email=email,
+                company=company,
+                contact_permission=req.contactPermission,
+                registration_id=registration_id,
+            )
+
+        response = {
             "message": "Check-in successful! Welcome.",
             "registrationId": registration_id,
         }
+
+        if print_result is not None:
+            response["printResult"] = print_result
+
+        return response
 
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Registration error | error_type=%s | error=%s", type(e).__name__, e)
+        if isinstance(e, db.DatabricksConnectionError):
+            diagnostics = getattr(e, "diagnostics", {})
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "message": f"Registration failed: {str(e)}",
+                    "type": "databricks_connection_error",
+                    "diagnostics": diagnostics,
+                },
+            )
         raise HTTPException(
             status_code=500,
             detail=f"Registration failed: {str(e)}",
@@ -629,127 +996,19 @@ async def print_nametag(req: PrintRequest):
     if not req.firstName:
         raise HTTPException(status_code=400, detail="First name is required for printing.")
 
-    name_display = req.firstName.strip().upper()
     company_val = (req.company or "").strip()
     group = (req.groupName or EVENT_NAME).strip()
     location = (req.location or EVENT_LOCATION).strip()
 
     try:
         logger.info("Print request received | registration_id=%s | first_name_len=%s", req.registrationId, len(req.firstName or ""))
-        # Generate PNG image
-        image_buffer = generate_nametag_image(
-            {
-                "name": name_display,
-                "company": company_val,
-                "groupName": group,
-                "location": location,
-            }
-        )
-
-        image_id, png_filename, saved_path = _save_nametag_image(
-            image_buffer,
-            name_display,
+        return await _dispatch_nametag(
+            first_name=req.firstName,
+            company_val=company_val,
+            group=group,
+            location=location,
             registration_id=req.registrationId,
         )
-
-        if req.registrationId is not None:
-            try:
-                await db.attach_nametag_filename(req.registrationId, png_filename)
-            except Exception as exc:
-                logger.warning("Could not attach nametag filename | registration_id=%s | error=%s", req.registrationId, exc)
-
-        # Default print payload: generated image exactly as saved.
-        print_buffer = image_buffer
-        print_label_width = LABEL_WIDTH_PX
-        print_label_height = LABEL_HEIGHT_PX
-
-        if LABEL_HEIGHT_PX > LABEL_WIDTH_PX:
-            # Portrait labels (e.g. 50x80) are rotated for printer output only.
-            # Saved images and browser previews intentionally stay unrotated.
-            try:
-                with Image.open(BytesIO(image_buffer)) as portrait_img:
-                    rotated = portrait_img.rotate(-90, expand=True)
-                    rotated_buffer = BytesIO()
-                    rotated.save(rotated_buffer, format="PNG")
-                    # Printer receives landscape-oriented pixels + swapped dimensions.
-                    print_buffer = rotated_buffer.getvalue()
-                    print_label_width = LABEL_HEIGHT_PX
-                    print_label_height = LABEL_WIDTH_PX
-            except Exception as rotate_exc:
-                logger.warning("Portrait rotation failed; using original orientation | error=%s", rotate_exc)
-
-        image_base64 = base64.b64encode(print_buffer).decode()
-        print_payload = {
-            "imageBase64": image_base64,
-            "labelWidth": print_label_width,
-            "labelHeight": print_label_height,
-            "printTask": os.getenv("NIIMBOT_PRINT_TASK", "B1"),
-            "printDirection": "top",
-            "quantity": 1,
-        }
-
-        queue_job_id: Optional[str] = None
-        try:
-            queue_job_id = await _enqueue_print_job(
-                print_payload=print_payload,
-                registration_id=req.registrationId,
-                name_display=name_display,
-                company_val=company_val,
-                group=group,
-                location=location,
-                png_filename=png_filename,
-            )
-        except Exception as queue_exc:
-            # Keep current user flow unchanged if queue-write fails.
-            logger.warning("Failed to enqueue print job | error=%s", queue_exc)
-
-        printer = await _check_printer_available()
-
-        printed = False
-        printer_message = ""
-
-        if printer["available"]:
-            try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
-                    print_res = await client.post(
-                        f"{NIIMBOT_SERVER_URL}/print",
-                        json=print_payload,
-                    )
-
-                    if print_res.status_code == 200:
-                        printed = True
-                        logger.info("Printer accepted print job | registration_id=%s", req.registrationId)
-                    else:
-                        printer_message = f"Printer rejected job: {print_res.text}"
-                        logger.warning("Printer rejected job | status=%s | body=%s", print_res.status_code, print_res.text)
-            except Exception as exc:
-                printer_message = f"Printer error: {exc}"
-                logger.warning("Printer request failed | error=%s", exc)
-        else:
-            printer_message = printer["reason"]
-
-        message = (
-            "Name tag saved and sent to printer successfully."
-            if printed
-            else "Name tag saved. Printer not available, print skipped."
-        )
-
-        return {
-            "message": message,
-            "data": {
-                "imageId": image_id,
-                "filename": png_filename,
-                "savedPath": saved_path,
-                "printed": printed,
-                "printerMessage": printer_message,
-                "groupName": group,
-                "location": location,
-                "name": name_display,
-                "company": company_val,
-                "registrationId": req.registrationId,
-                "queueJobId": queue_job_id,
-            },
-        }
 
     except HTTPException:
         raise
@@ -790,15 +1049,12 @@ async def get_admin_attendees():
     attendees: list[dict] = []
 
     for registration in registrations:
-        image_filename = registration.get("nametag_image_filename")
-        if not image_filename:
-            first_name = _get_first_name_for_match(registration)
-            image_filename = _find_latest_nametag_for_first_name(first_name)
+        first_name = _get_first_name_for_match(registration)
+        image_filename = _find_latest_nametag_for_first_name(first_name)
 
         attendees.append(
             {
                 **registration,
-                "nametag_image_filename": image_filename,
                 "nametag_image_url": f"/images/{image_filename}" if image_filename else None,
             }
         )

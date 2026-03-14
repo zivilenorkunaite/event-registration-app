@@ -1,3 +1,9 @@
+"""Direct printer smoke-test utility.
+
+This script talks to the local printer server (default: http://localhost:5050),
+builds a few diagnostic PNG patterns, and sends them to the printer.
+"""
+
 import base64
 import json
 from pathlib import Path
@@ -14,6 +20,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def connect_printer():
+    """Attempt a one-time connect call before sending any print jobs."""
     req = Request(
         SERVER + "/connect",
         data=json.dumps({"transport": TRANSPORT, "address": ADDRESS}).encode("utf-8"),
@@ -28,6 +35,7 @@ def connect_printer():
 
 
 def send_png(path: Path, label_width=640, label_height=400, direction="top"):
+    """Send a PNG file to the local print endpoint with explicit label dimensions."""
     with path.open("rb") as file_handle:
         b64 = base64.b64encode(file_handle.read()).decode("ascii")
 
@@ -55,6 +63,7 @@ def send_png(path: Path, label_width=640, label_height=400, direction="top"):
 
 
 def build_tests():
+    """Create a small set of diagnostic images and return their paths."""
     base = Image.new("RGB", (640, 400), "white")
     draw = ImageDraw.Draw(base)
     draw.rectangle([0, 0, 639, 399], outline="black", width=8)
@@ -80,6 +89,7 @@ def build_tests():
 
 
 def main():
+    """Run connect + test image generation + print dispatch in sequence."""
     connect_printer()
     test_paths = build_tests()
     for test_path in test_paths:

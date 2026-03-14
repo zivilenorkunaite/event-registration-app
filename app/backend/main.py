@@ -362,16 +362,20 @@ async def print_nametag(req: PrintRequest):
         printer_message = ""
 
         if printer["available"]:
+            # Default behavior: print the generated image exactly as saved.
             print_buffer = image_buffer
             print_label_width = LABEL_WIDTH_PX
             print_label_height = LABEL_HEIGHT_PX
 
             if LABEL_HEIGHT_PX > LABEL_WIDTH_PX:
+                # Portrait labels (e.g. 50x80) are rotated for printer output only.
+                # Saved images and browser previews intentionally stay unrotated.
                 try:
                     with Image.open(BytesIO(image_buffer)) as portrait_img:
                         rotated = portrait_img.rotate(-90, expand=True)
                         rotated_buffer = BytesIO()
                         rotated.save(rotated_buffer, format="PNG")
+                        # Printer receives landscape-oriented pixels + swapped dimensions.
                         print_buffer = rotated_buffer.getvalue()
                         print_label_width = LABEL_HEIGHT_PX
                         print_label_height = LABEL_WIDTH_PX

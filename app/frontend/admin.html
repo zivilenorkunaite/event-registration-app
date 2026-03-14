@@ -423,15 +423,6 @@
           .replace(/\b\w/g, (c) => c.toUpperCase());
       }
 
-      function escapeHtml(value) {
-        return String(value)
-          .replaceAll("&", "&amp;")
-          .replaceAll("<", "&lt;")
-          .replaceAll(">", "&gt;")
-          .replaceAll('"', "&quot;")
-          .replaceAll("'", "&#39;");
-      }
-
       function normalizeText(value) {
         return String(value ?? "")
           .trim()
@@ -561,6 +552,7 @@
       }
 
       function renderTable(attendees) {
+        // Keep a stable, reusable column order for both table render and CSV export.
         currentOrderedKeys = buildOrderedKeys(attendees);
 
         const headerCells = currentOrderedKeys
@@ -654,6 +646,7 @@
             throw new Error(`Request failed (${response.status})`);
           const payload = await response.json();
           allAttendees = payload.attendees || [];
+          // Controls are hidden until data is available to avoid empty filtering UI.
           controls.style.display = allAttendees.length > 0 ? "grid" : "none";
           updateView();
         } catch (error) {

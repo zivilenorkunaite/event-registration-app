@@ -46,52 +46,6 @@ _height_px_raw = _mm_to_px(LABEL_HEIGHT_MM, _DPI)
 LABEL_WIDTH_PX = _align_to_multiple_of_8(_clamp(_width_px_raw, 8, _MAX_B3S_WIDTH_PX))
 LABEL_HEIGHT_PX = _align_to_multiple_of_8(_clamp(_height_px_raw, 8, _MAX_B3S_HEIGHT_PX))
 
-# Font size configuration for responsive scaling
-FONT_SIZES = {
-    "name": {
-        "base": 70,
-        "thresholds": [
-            {"length": 8, "size": 55},
-            {"length": 12, "size": 45},
-            {"length": 15, "size": 35},
-        ],
-    },
-    "company": {
-        "base": 22,
-        "thresholds": [
-            {"length": 15, "size": 20},
-            {"length": 20, "size": 18},
-            {"length": 25, "size": 16},
-        ],
-    },
-    "group": {
-        "base": 15,
-        "thresholds": [
-            {"length": 25, "size": 14},
-            {"length": 30, "size": 13},
-            {"length": 35, "size": 12},
-            {"length": 40, "size": 11},
-        ],
-    },
-    "location": {
-        "base": 16,
-        "thresholds": [
-            {"length": 25, "size": 15},
-            {"length": 30, "size": 14},
-            {"length": 35, "size": 13},
-            {"length": 40, "size": 12},
-        ],
-    },
-}
-
-SVG_CONFIG = {
-    "padding": 10,
-    "divider_color": "#ddd",
-    "divider_width": 1,
-    "text_color": "#1a1a1a",
-    "font_family": "Arial",
-}
-
 
 def _measure_text(font: ImageFont.FreeTypeFont, text: str) -> tuple[int, int]:
     """Measure rendered text size for the given font."""

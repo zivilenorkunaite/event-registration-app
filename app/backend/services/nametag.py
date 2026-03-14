@@ -252,7 +252,7 @@ def generate_nametag_image(opts: dict) -> bytes:
 
     # ── Separator & company footer ────────────────────────────────────────────
     sep_y = h - footer_h
-    draw.line([(pad, sep_y), (w - pad, sep_y)], fill="#cccccc", width=1)
+    draw.line([(pad, sep_y), (w - pad, sep_y)], fill="#cccccc", width=3)
     _draw_centered_in_band(
         draw=draw,
         text=company,

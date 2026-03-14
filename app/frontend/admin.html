@@ -3,127 +3,379 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Admin - Attendees</title>
+    <title>Admin · Attendees</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
     />
     <style>
+      :root {
+        --brand-navy: #1a3a5c;
+        --brand-navy-dark: #112640;
+        --brand-amber: #e87722;
+        --brand-amber-hover: #d0681a;
+        --brand-bg: #f0f3f7;
+        --brand-card: #ffffff;
+        --brand-border: #dce3ec;
+        --brand-text: #1a2a3a;
+        --brand-muted: #6b7a8d;
+        --brand-label: #374a5e;
+        --brand-th-bg: #f4f7fa;
+        --brand-row-hover: #f8fafc;
+        --brand-success-bg: #eaf7ec;
+        --brand-success-text: #1a6b2e;
+        --brand-error-bg: #fef2f2;
+        --brand-error-text: #b91c1c;
+        --brand-input-bg: #f7f9fc;
+        --brand-input-border: #c8d3df;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
       body {
-        padding: 1.5rem 1rem;
+        font-family:
+          "Inter",
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background: var(--brand-bg);
+        color: var(--brand-text);
+        margin: 0;
+        padding: 0;
+        min-height: 100vh;
       }
-      main {
-        max-width: 1280px;
-        margin: 0 auto;
-      }
-      .top-row {
+
+      /* ── Header ──────────────────────────────────────────── */
+      .page-header {
+        background: var(--brand-navy);
+        padding: 0.85rem 2rem;
         display: flex;
-        justify-content: space-between;
         align-items: center;
+        justify-content: space-between;
         gap: 1rem;
         flex-wrap: wrap;
       }
-      .muted {
-        color: var(--pico-muted-color);
+      .page-header-left {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
       }
-      .controls {
-        display: grid;
-        grid-template-columns: 1.5fr 1fr 1fr auto;
-        gap: 0.75rem;
-        align-items: end;
-        margin: 0.75rem 0 1rem;
+      .page-header-logo {
+        width: 32px;
+        height: 32px;
+        background: var(--brand-amber);
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+        flex-shrink: 0;
       }
-      .controls label {
-        margin-bottom: 0;
+      .page-header-title {
+        color: #fff;
+        font-size: 0.95rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        line-height: 1.2;
       }
-      .controls input,
-      .controls select {
-        margin-bottom: 0;
+      .page-header-subtitle {
+        color: rgba(255, 255, 255, 0.55);
+        font-size: 0.78rem;
+        font-weight: 400;
+        margin-top: 1px;
       }
-      @media (max-width: 920px) {
-        .controls {
-          grid-template-columns: 1fr;
-          align-items: stretch;
-        }
-      }
-      table {
-        font-size: 0.92rem;
-      }
-      td,
-      th {
-        vertical-align: top;
+      .btn-back {
+        font-family: inherit;
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.8);
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 6px;
+        padding: 0.4rem 0.85rem;
+        cursor: pointer;
+        text-decoration: none;
+        transition: background 0.15s;
         white-space: nowrap;
       }
-      .empty {
-        margin-top: 1rem;
-        padding: 1rem;
-        border: 1px solid var(--pico-muted-border-color);
-        border-radius: 8px;
+      .btn-back:hover {
+        background: rgba(255, 255, 255, 0.18);
       }
-      .error {
-        margin-top: 1rem;
-        padding: 1rem;
-        border-radius: 8px;
-        background: rgba(220, 53, 69, 0.12);
-        color: #b02a37;
+
+      /* ── Page body ───────────────────────────────────────── */
+      .page-body {
+        padding: 2rem 1.5rem;
+        max-width: 1400px;
+        margin: 0 auto;
       }
+
+      /* ── Card ────────────────────────────────────────────── */
+      .card {
+        background: var(--brand-card);
+        border: 1px solid var(--brand-border);
+        border-radius: 14px;
+        padding: 1.75rem 1.75rem 1.25rem;
+        box-shadow: 0 2px 16px rgba(26, 58, 92, 0.07);
+      }
+
+      /* ── Top bar ─────────────────────────────────────────── */
+      .top-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.5rem;
+      }
+      .top-bar h2 {
+        margin: 0;
+        font-size: 1.2rem;
+        font-weight: 800;
+        color: var(--brand-navy);
+      }
+      .summary {
+        font-size: 0.82rem;
+        color: var(--brand-muted);
+        margin: 0 0 1.25rem;
+      }
+
+      /* ── Controls ────────────────────────────────────────── */
+      .controls {
+        display: grid;
+        grid-template-columns: 1.6fr 1fr 1fr auto;
+        gap: 0.65rem;
+        align-items: end;
+        margin-bottom: 1.25rem;
+      }
+      .control-field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+      .control-field label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--brand-label);
+        letter-spacing: 0.01em;
+      }
+      .control-field input,
+      .control-field select {
+        background: var(--brand-input-bg);
+        border: 1.5px solid var(--brand-input-border);
+        border-radius: 7px;
+        padding: 0.5rem 0.7rem;
+        font-family: inherit;
+        font-size: 0.88rem;
+        color: var(--brand-text);
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      .control-field input:focus,
+      .control-field select:focus {
+        border-color: var(--brand-navy);
+      }
+      .btn-export {
+        font-family: inherit;
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--brand-navy);
+        background: #fff;
+        border: 1.5px solid var(--brand-border);
+        border-radius: 7px;
+        padding: 0.5rem 1rem;
+        cursor: pointer;
+        white-space: nowrap;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+        align-self: end;
+      }
+      .btn-export:hover {
+        background: var(--brand-th-bg);
+        border-color: #b0bec8;
+      }
+      .btn-export:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      @media (max-width: 860px) {
+        .controls {
+          grid-template-columns: 1fr 1fr;
+        }
+        .btn-export {
+          grid-column: 1 / -1;
+        }
+      }
+      @media (max-width: 540px) {
+        .controls {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* ── Table ───────────────────────────────────────────── */
       .table-wrap {
         overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+      }
+      thead tr {
+        background: var(--brand-th-bg);
+        border-bottom: 2px solid var(--brand-border);
+      }
+      th {
+        padding: 0.65rem 0.85rem;
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: var(--brand-label);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        text-align: left;
+        white-space: nowrap;
+      }
+      td {
+        padding: 0.6rem 0.85rem;
+        border-bottom: 1px solid var(--brand-border);
+        vertical-align: middle;
+        white-space: nowrap;
+        color: var(--brand-text);
+      }
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+      tbody tr:hover td {
+        background: var(--brand-row-hover);
+      }
+
+      /* ── Reprint button ──────────────────────────────────── */
+      .btn-reprint {
+        font-family: inherit;
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: var(--brand-amber);
+        background: rgba(232, 119, 34, 0.08);
+        border: 1.5px solid rgba(232, 119, 34, 0.35);
+        border-radius: 5px;
+        padding: 0.3rem 0.65rem;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+        white-space: nowrap;
+      }
+      .btn-reprint:hover {
+        background: rgba(232, 119, 34, 0.15);
+        border-color: var(--brand-amber);
+      }
+      .btn-reprint:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .btn-reprint.printing {
+        color: var(--brand-muted);
+        background: var(--brand-th-bg);
+        border-color: var(--brand-border);
+      }
+      .btn-reprint.done {
+        color: var(--brand-success-text);
+        background: var(--brand-success-bg);
+        border-color: #b7e4c2;
+      }
+      .btn-reprint.failed {
+        color: var(--brand-error-text);
+        background: var(--brand-error-bg);
+        border-color: #fecaca;
+      }
+
+      /* ── Empty / error states ────────────────────────────── */
+      .state-box {
+        padding: 1.5rem 1rem;
+        text-align: center;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        color: var(--brand-muted);
+        border: 1px dashed var(--brand-border);
+        margin-top: 0.5rem;
+      }
+      .state-box.error {
+        color: var(--brand-error-text);
+        background: var(--brand-error-bg);
+        border: 1px solid #fecaca;
       }
     </style>
   </head>
   <body>
-    <main>
-      <div class="top-row">
-        <h2>Admin · Registered Attendees</h2>
-        <a href="/" role="button" class="secondary">Back to Check-in</a>
+    <header class="page-header">
+      <div class="page-header-left">
+        <div class="page-header-logo">⚡</div>
+        <div>
+          <div class="page-header-title" id="pageHeaderTitle">Event Admin</div>
+          <div class="page-header-subtitle">Registered Attendees</div>
+        </div>
       </div>
-      <p class="muted" id="summary">Loading attendees...</p>
+      <a href="/" class="btn-back">← Back to Check-in</a>
+    </header>
 
-      <div class="controls" id="controls" style="display: none">
-        <label>
-          Search
-          <input
-            id="searchInput"
-            type="search"
-            placeholder="Name, email, company"
-          />
-        </label>
-        <label>
-          Contact Permission
-          <select id="contactFilter">
-            <option value="all">All</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </label>
-        <label>
-          Sort
-          <select id="sortBy">
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-            <option value="name_asc">Name A→Z</option>
-            <option value="name_desc">Name Z→A</option>
-            <option value="company_asc">Company A→Z</option>
-          </select>
-        </label>
-        <button id="exportCsvBtn" class="secondary" type="button">
-          Export CSV
-        </button>
-      </div>
+    <div class="page-body">
+      <div class="card">
+        <div class="top-bar">
+          <h2>Attendees</h2>
+        </div>
+        <p class="summary" id="summary">Loading attendees...</p>
 
-      <div id="error" class="error" style="display: none"></div>
-      <div id="empty" class="empty" style="display: none">
-        No attendees yet.
-      </div>
+        <div class="controls" id="controls" style="display: none">
+          <div class="control-field">
+            <label for="searchInput">Search</label>
+            <input
+              id="searchInput"
+              type="search"
+              placeholder="Name, email, company…"
+            />
+          </div>
+          <div class="control-field">
+            <label for="contactFilter">Contact permission</label>
+            <select id="contactFilter">
+              <option value="all">All</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+          <div class="control-field">
+            <label for="sortBy">Sort</label>
+            <select id="sortBy">
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="name_asc">Name A→Z</option>
+              <option value="name_desc">Name Z→A</option>
+              <option value="company_asc">Company A→Z</option>
+            </select>
+          </div>
+          <button id="exportCsvBtn" class="btn-export" type="button">
+            ⬇ Export CSV
+          </button>
+        </div>
 
-      <div class="table-wrap" id="tableWrap" style="display: none">
-        <table id="attendeesTable">
-          <thead id="tableHead"></thead>
-          <tbody id="tableBody"></tbody>
-        </table>
+        <div id="error" class="state-box error" style="display: none"></div>
+        <div id="empty" class="state-box" style="display: none">
+          No attendees yet.
+        </div>
+
+        <div class="table-wrap" id="tableWrap" style="display: none">
+          <table id="attendeesTable">
+            <thead id="tableHead"></thead>
+            <tbody id="tableBody"></tbody>
+          </table>
+        </div>
       </div>
-    </main>
+    </div>
 
     <script>
       const summary = document.getElementById("summary");
@@ -137,20 +389,38 @@
       const contactFilter = document.getElementById("contactFilter");
       const sortBy = document.getElementById("sortBy");
       const exportCsvBtn = document.getElementById("exportCsvBtn");
+      const pageHeaderTitle = document.getElementById("pageHeaderTitle");
 
       let allAttendees = [];
       let currentRows = [];
       let currentOrderedKeys = [];
+      let eventName = "";
+      let eventLocation = "";
 
       const API_BASE =
         window.location.port === "8080"
           ? `${window.location.protocol}//${window.location.hostname}:8000`
           : "";
 
+      // Load event config for header title
+      (async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/config`);
+          if (res.ok) {
+            const config = await res.json();
+            eventName = config.eventName || "";
+            eventLocation = config.eventLocation || "";
+            const label =
+              eventName + (eventLocation ? ` · ${eventLocation}` : "");
+            if (label) pageHeaderTitle.textContent = label;
+          }
+        } catch (_) {}
+      })();
+
       function formatHeader(key) {
         return key
           .replaceAll("_", " ")
-          .replace(/\b\w/g, (char) => char.toUpperCase());
+          .replace(/\b\w/g, (c) => c.toUpperCase());
       }
 
       function escapeHtml(value) {
@@ -169,9 +439,8 @@
       }
 
       function parseCreatedAt(attendee) {
-        const raw = attendee.created_at;
-        const timestamp = Date.parse(raw || "");
-        return Number.isNaN(timestamp) ? 0 : timestamp;
+        const ts = Date.parse(attendee.created_at || "");
+        return Number.isNaN(ts) ? 0 : ts;
       }
 
       function attendeeName(attendee) {
@@ -180,17 +449,20 @@
         return `${first} ${last}`.trim();
       }
 
+      // Keys excluded from table columns and CSV
+      const NAMETAG_KEYS = new Set([
+        "nametag_image_url",
+        "nametag_image_filename",
+      ]);
+
       function buildOrderedKeys(attendees) {
         const keys = new Set();
-        attendees.forEach((attendee) => {
-          Object.keys(attendee).forEach((key) => {
-            if (key !== "nametag_image_url") {
-              keys.add(key);
-            }
-          });
-        });
-
-        return [
+        attendees.forEach((a) =>
+          Object.keys(a).forEach((k) => {
+            if (!NAMETAG_KEYS.has(k)) keys.add(k);
+          }),
+        );
+        const priority = [
           "id",
           "first_name",
           "last_name",
@@ -198,23 +470,11 @@
           "company_email",
           "contact_permission",
           "created_at",
-          ...Array.from(keys).filter(
-            (key) =>
-              ![
-                "id",
-                "first_name",
-                "last_name",
-                "company",
-                "company_email",
-                "contact_permission",
-                "created_at",
-                "nametag_image_filename",
-              ].includes(key),
-          ),
-          "nametag_image_filename",
-        ].filter(
-          (key, index, arr) => arr.indexOf(key) === index && keys.has(key),
-        );
+        ];
+        return [
+          ...priority.filter((k) => keys.has(k)),
+          ...Array.from(keys).filter((k) => !priority.includes(k)),
+        ];
       }
 
       function applyFiltersAndSort(attendees) {
@@ -222,75 +482,112 @@
         const permission = contactFilter.value;
         const sort = sortBy.value;
 
-        const filtered = attendees.filter((attendee) => {
-          const isPermissionMatch =
+        const filtered = attendees.filter((a) => {
+          const permOk =
             permission === "all"
               ? true
               : permission === "yes"
-                ? attendee.contact_permission === true
-                : attendee.contact_permission === false;
-
-          if (!isPermissionMatch) {
-            return false;
-          }
-
-          if (!query) {
-            return true;
-          }
-
+                ? a.contact_permission === true
+                : a.contact_permission === false;
+          if (!permOk) return false;
+          if (!query) return true;
           const haystack = [
-            attendee.first_name,
-            attendee.last_name,
-            attendee.name,
-            attendee.company,
-            attendee.company_email,
+            a.first_name,
+            a.last_name,
+            a.name,
+            a.company,
+            a.company_email,
           ]
             .map(normalizeText)
             .join(" ");
-
           return haystack.includes(query);
         });
 
         filtered.sort((a, b) => {
-          if (sort === "oldest") {
-            return parseCreatedAt(a) - parseCreatedAt(b);
-          }
-          if (sort === "name_asc") {
+          if (sort === "oldest") return parseCreatedAt(a) - parseCreatedAt(b);
+          if (sort === "name_asc")
             return attendeeName(a).localeCompare(attendeeName(b));
-          }
-          if (sort === "name_desc") {
+          if (sort === "name_desc")
             return attendeeName(b).localeCompare(attendeeName(a));
-          }
-          if (sort === "company_asc") {
+          if (sort === "company_asc")
             return normalizeText(a.company).localeCompare(
               normalizeText(b.company),
             );
-          }
           return parseCreatedAt(b) - parseCreatedAt(a);
         });
 
         return filtered;
       }
 
+      async function reprintNametag(btn, attendee) {
+        btn.disabled = true;
+        btn.classList.add("printing");
+        btn.textContent = "Printing…";
+
+        const firstName = (attendee.first_name || attendee.name || "").trim();
+        const payload = {
+          firstName,
+          company: attendee.company || "",
+          groupName: eventName || undefined,
+          location: eventLocation || undefined,
+          registrationId: attendee.id ?? null,
+        };
+
+        try {
+          const res = await fetch(`${API_BASE}/api/print`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          btn.classList.remove("printing");
+          if (res.ok) {
+            btn.classList.add("done");
+            btn.textContent = "✓ Sent";
+          } else {
+            btn.classList.add("failed");
+            btn.textContent = "Failed";
+          }
+        } catch (_) {
+          btn.classList.remove("printing");
+          btn.classList.add("failed");
+          btn.textContent = "Error";
+        }
+
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.classList.remove("done", "failed");
+          btn.textContent = "🖨 Print";
+        }, 3000);
+      }
+
       function renderTable(attendees) {
         currentOrderedKeys = buildOrderedKeys(attendees);
 
         const headerCells = currentOrderedKeys
-          .map((key) => `<th>${formatHeader(key)}</th>`)
+          .map((k) => `<th>${formatHeader(k)}</th>`)
           .join("");
         tableHead.innerHTML = `<tr>${headerCells}<th>Nametag</th></tr>`;
 
-        tableBody.innerHTML = attendees
-          .map((attendee) => {
-            const cells = currentOrderedKeys
-              .map((key) => `<td>${escapeHtml(attendee[key] ?? "")}</td>`)
-              .join("");
-            const linkCell = attendee.nametag_image_url
-              ? `<td><a href="${escapeHtml(attendee.nametag_image_url)}" target="_blank" rel="noopener">Open</a></td>`
-              : "<td>-</td>";
-            return `<tr>${cells}${linkCell}</tr>`;
-          })
-          .join("");
+        tableBody.innerHTML = "";
+        attendees.forEach((attendee) => {
+          const tr = document.createElement("tr");
+
+          currentOrderedKeys.forEach((key) => {
+            const td = document.createElement("td");
+            td.textContent = attendee[key] ?? "";
+            tr.appendChild(td);
+          });
+
+          const nametd = document.createElement("td");
+          const btn = document.createElement("button");
+          btn.className = "btn-reprint";
+          btn.textContent = "🖨 Print";
+          btn.addEventListener("click", () => reprintNametag(btn, attendee));
+          nametd.appendChild(btn);
+          tr.appendChild(nametd);
+
+          tableBody.appendChild(tr);
+        });
       }
 
       function updateView() {
@@ -322,30 +619,20 @@
       }
 
       function csvEscape(value) {
-        const asText = String(value ?? "");
-        if (
-          asText.includes('"') ||
-          asText.includes(",") ||
-          asText.includes("\n")
-        ) {
-          return `"${asText.replaceAll('"', '""')}"`;
-        }
-        return asText;
+        const s = String(value ?? "");
+        return s.includes('"') || s.includes(",") || s.includes("\n")
+          ? `"${s.replaceAll('"', '""')}"`
+          : s;
       }
 
       function exportCsv() {
-        if (currentRows.length === 0) {
-          return;
-        }
-
-        const columns = [...currentOrderedKeys, "nametag_image_url"];
-        const header = columns
-          .map((key) => csvEscape(formatHeader(key)))
-          .join(",");
-        const rows = currentRows.map((attendee) =>
-          columns.map((key) => csvEscape(attendee[key] ?? "")).join(","),
+        if (currentRows.length === 0) return;
+        // Exclude nametag columns from CSV export
+        const columns = currentOrderedKeys.filter((k) => !NAMETAG_KEYS.has(k));
+        const header = columns.map((k) => csvEscape(formatHeader(k))).join(",");
+        const rows = currentRows.map((a) =>
+          columns.map((k) => csvEscape(a[k] ?? "")).join(","),
         );
-
         const csvContent = [header, ...rows].join("\n");
         const blob = new Blob([csvContent], {
           type: "text/csv;charset=utf-8;",
@@ -363,10 +650,8 @@
       async function loadAttendees() {
         try {
           const response = await fetch(`${API_BASE}/api/admin/attendees`);
-          if (!response.ok) {
+          if (!response.ok)
             throw new Error(`Request failed (${response.status})`);
-          }
-
           const payload = await response.json();
           allAttendees = payload.attendees || [];
           controls.style.display = allAttendees.length > 0 ? "grid" : "none";

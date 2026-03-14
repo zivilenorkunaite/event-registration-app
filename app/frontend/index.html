@@ -1,26 +1,109 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Event Check-in</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
     />
     <style>
+      :root {
+        --brand-navy: #1a3a5c;
+        --brand-navy-dark: #112640;
+        --brand-amber: #e87722;
+        --brand-amber-hover: #d0681a;
+        --brand-bg: #f0f3f7;
+        --brand-card: #ffffff;
+        --brand-border: #dce3ec;
+        --brand-text: #1a2a3a;
+        --brand-muted: #6b7a8d;
+        --brand-label: #374a5e;
+        --brand-input-bg: #f7f9fc;
+        --brand-input-border: #c8d3df;
+        --brand-input-focus: #1a3a5c;
+        --brand-success-bg: #eaf7ec;
+        --brand-success-text: #1a6b2e;
+        --brand-error-bg: #fef2f2;
+        --brand-error-text: #b91c1c;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
       body {
-        padding: 2.5rem 1rem;
+        font-family:
+          "Inter",
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background: var(--brand-bg);
+        color: var(--brand-text);
+        margin: 0;
+        padding: 0;
         min-height: 100vh;
       }
-      main {
-        max-width: 1160px;
+
+      /* ── Page header bar ─────────────────────────────────── */
+      .page-header {
+        background: var(--brand-navy);
+        padding: 0.85rem 2rem;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+      }
+      .page-header-logo {
+        width: 32px;
+        height: 32px;
+        background: var(--brand-amber);
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+        flex-shrink: 0;
+      }
+      .page-header-title {
+        color: #fff;
+        font-size: 0.95rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        line-height: 1.2;
+      }
+      .page-header-subtitle {
+        color: rgba(255, 255, 255, 0.55);
+        font-size: 0.78rem;
+        font-weight: 400;
+        margin-top: 1px;
+      }
+
+      /* ── Page body ───────────────────────────────────────── */
+      .page-body {
+        padding: 2.5rem 1.5rem;
+        max-width: 1100px;
         margin: 0 auto;
       }
+
+      /* ── Card ────────────────────────────────────────────── */
+      .card {
+        background: var(--brand-card);
+        border: 1px solid var(--brand-border);
+        border-radius: 14px;
+        padding: 2.25rem 2rem;
+        box-shadow: 0 2px 16px rgba(26, 58, 92, 0.07);
+      }
+
+      /* ── Layout grid ─────────────────────────────────────── */
       .layout-grid {
         display: grid;
-        grid-template-columns: 1.45fr 1fr;
-        gap: 2.5rem;
+        grid-template-columns: 1.5fr 1fr;
+        gap: 3rem;
         align-items: start;
       }
       .layout-grid.hidden {
@@ -31,96 +114,168 @@
       }
       .right-column {
         display: flex;
-        justify-content: center;
+        flex-direction: column;
+        align-items: center;
+        gap: 1rem;
+        padding-top: 0.5rem;
       }
+
+      /* ── Form heading ────────────────────────────────────── */
+      .form-heading {
+        margin: 0 0 0.35rem 0;
+        font-size: 1.45rem;
+        font-weight: 800;
+        color: var(--brand-navy);
+        letter-spacing: -0.01em;
+      }
+      .form-subheading {
+        margin: 0 0 1.85rem 0;
+        font-size: 0.9rem;
+        color: var(--brand-muted);
+        line-height: 1.5;
+      }
+
+      /* ── Form grid ───────────────────────────────────────── */
       .form-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 0.95rem 1rem;
+        gap: 0.9rem 1.1rem;
       }
-      .form-grid section {
-        margin-bottom: 0;
+      .form-field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
       }
-      .form-grid .full-row {
+      .form-field.full-row {
         grid-column: 1 / -1;
       }
-      @media (max-width: 1100px) {
-        body {
-          padding: 1.25rem 0.75rem;
-        }
-        .card {
-          padding: 1.5rem 1.25rem;
-        }
-        .layout-grid {
-          grid-template-columns: 1.25fr 0.95fr;
-          gap: 1.5rem;
-        }
+      .form-field label {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: var(--brand-label);
+        letter-spacing: 0.01em;
       }
+      .form-field input[type="text"],
+      .form-field input[type="email"] {
+        background: var(--brand-input-bg);
+        border: 1.5px solid var(--brand-input-border);
+        border-radius: 7px;
+        padding: 0.6rem 0.8rem;
+        font-family: inherit;
+        font-size: 0.92rem;
+        color: var(--brand-text);
+        outline: none;
+        transition:
+          border-color 0.15s,
+          box-shadow 0.15s;
+      }
+      .form-field input[type="text"]:focus,
+      .form-field input[type="email"]:focus {
+        border-color: var(--brand-input-focus);
+        box-shadow: 0 0 0 3px rgba(26, 58, 92, 0.1);
+      }
+      .form-field input[type="text"]::placeholder,
+      .form-field input[type="email"]::placeholder {
+        color: #b0bbc8;
+      }
+
+      /* checkbox row */
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-top: 0.25rem;
+      }
+      .checkbox-row input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        accent-color: var(--brand-navy);
+        flex-shrink: 0;
+        cursor: pointer;
+      }
+      .checkbox-row label {
+        font-size: 0.87rem;
+        color: var(--brand-muted);
+        cursor: pointer;
+        line-height: 1.4;
+      }
+
+      /* submit button */
+      .btn-checkin {
+        margin-top: 1.25rem;
+        width: 100%;
+        padding: 0.85rem 1.5rem;
+        background: var(--brand-amber);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        font-family: inherit;
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          transform 0.1s;
+      }
+      .btn-checkin:hover {
+        background: var(--brand-amber-hover);
+      }
+      .btn-checkin:active {
+        transform: scale(0.99);
+      }
+
+      /* messages */
+      #message {
+        margin-top: 1rem;
+        padding: 0.8rem 1rem;
+        border-radius: 8px;
+        font-size: 0.88rem;
+        font-weight: 500;
+        text-align: center;
+      }
+      #message.success {
+        background: var(--brand-success-bg);
+        color: var(--brand-success-text);
+        border: 1px solid #b7e4c2;
+      }
+      #message.error {
+        background: var(--brand-error-bg);
+        color: var(--brand-error-text);
+        border: 1px solid #fecaca;
+      }
+
+      /* ── Nametag preview label ───────────────────────────── */
+      .nametag-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--brand-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        text-align: center;
+      }
+
+      /* ── Responsive ──────────────────────────────────────── */
       @media (max-width: 900px) {
         .layout-grid {
           grid-template-columns: 1fr;
-          gap: 1.25rem;
+          gap: 1.5rem;
         }
-        .welcome {
-          margin-bottom: 1.25rem;
+        .right-column {
+          padding-top: 0;
         }
       }
-      @media (max-width: 768px) {
+      @media (max-width: 600px) {
+        .page-body {
+          padding: 1.25rem 0.75rem;
+        }
         .card {
-          padding: 1.25rem 1rem;
+          padding: 1.5rem 1.1rem;
         }
         .form-grid {
           grid-template-columns: 1fr;
-          gap: 0.9rem;
+          gap: 0.75rem;
         }
-      }
-      .card {
-        background: var(
-          --pico-card-background-color,
-          var(--pico-background-color)
-        );
-        border: 1px solid var(--pico-muted-border-color);
-        border-radius: 12px;
-        padding: 2rem 1.75rem;
-        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
-      }
-      h1 {
-        text-align: center;
-        margin-bottom: 0.5rem;
-        font-size: 1.5rem;
-        font-weight: 700;
-      }
-      .welcome {
-        text-align: center;
-        margin-bottom: 2rem;
-        font-size: 0.95rem;
-        color: var(--pico-muted-color);
-        line-height: 1.5;
-      }
-      form section {
-        margin-bottom: 1.35rem;
-      }
-      form button {
-        margin-top: 0.25rem;
-        padding: 0.85rem 1.5rem;
-        font-weight: 600;
-        border-radius: 8px;
-      }
-      #message {
-        margin-top: 1.25rem;
-        padding: 0.85rem 1rem;
-        border-radius: 8px;
-        text-align: center;
-        font-size: 0.9rem;
-        font-weight: 500;
-      }
-      #message.success {
-        background: rgba(0, 128, 0, 0.12);
-        color: #0d6b0d;
-      }
-      #message.error {
-        background: rgba(220, 53, 69, 0.12);
-        color: #b02a37;
       }
       .name-tag-wrap {
         display: flex;
@@ -134,33 +289,51 @@
         width: 70mm;
         height: 40mm;
         max-width: 70mm;
-        position: relative;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      .name-tag-header {
+        background: #1a1a1a;
+        height: 23%;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 0 8px;
+        gap: 2px;
         overflow: hidden;
       }
-      .name-tag-content {
-        position: absolute;
-        inset: 3% 0 4% 0;
-        padding: 0 10px;
-        display: grid;
-        grid-template-rows: 1fr 1fr auto 7fr auto 1fr;
-        align-items: center;
-        box-sizing: border-box;
+      .name-tag-group {
+        font-size: 0.62rem;
+        font-weight: 700;
+        color: #ffffff;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        line-height: 1;
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
       }
-      .name-tag-group,
       .name-tag-location {
-        font-size: 0.72rem;
+        font-size: 0.52rem;
         font-weight: 500;
-        color: #1a1a1a;
-        letter-spacing: 0.05em;
+        color: #aaaaaa;
+        letter-spacing: 0.04em;
         text-transform: uppercase;
         line-height: 1;
         text-align: center;
       }
-      .name-tag-divider {
-        border: none;
-        border-top: 1px solid #ddd;
-        margin: 0;
-        width: 100%;
+      .name-tag-name-zone {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        padding: 0 8px;
       }
       .name-tag-name {
         font-size: 2rem;
@@ -183,20 +356,33 @@
       .name-tag-company.placeholder {
         color: #ccc;
       }
+      .name-tag-footer {
+        border-top: 2px solid #cccccc;
+        height: 21%;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 8px;
+        overflow: hidden;
+      }
       .name-tag-company {
-        font-size: 0.78rem;
+        font-size: 0.62rem;
         font-weight: 600;
-        color: #1a1a1a;
+        color: #444444;
         text-align: center;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
         line-height: 1;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        max-width: 100%;
       }
       .home-screen {
         display: none;
         text-align: center;
-        padding: 1.5rem 1rem;
+        padding: 2.5rem 1rem;
       }
       .home-screen.active {
         display: flex;
@@ -206,95 +392,145 @@
       }
       .home-title {
         font-size: 1.6rem;
-        font-weight: 700;
+        font-weight: 800;
         margin: 0;
+        color: var(--brand-navy);
       }
       .home-subtitle {
         margin: 0;
-        color: var(--pico-muted-color);
+        color: var(--brand-muted);
+        font-size: 0.95rem;
       }
       .printer-status-footer {
-        margin-top: 1rem;
+        margin-top: 1.25rem;
         text-align: center;
-        font-size: 0.9rem;
-        color: var(--pico-muted-color);
+        font-size: 0.82rem;
+        color: var(--brand-muted);
+        padding-top: 1rem;
+        border-top: 1px solid var(--brand-border);
       }
       .printer-status-footer.online {
-        color: #0d6b0d;
+        color: var(--brand-success-text);
       }
       .printer-status-footer.offline {
-        color: #b02a37;
+        color: var(--brand-error-text);
       }
       .home-checkin-btn {
         width: min(420px, 100%);
         padding: 1rem 1.5rem;
         border-radius: 10px;
-        font-size: 1.35rem;
+        font-family: inherit;
+        font-size: 1.2rem;
         font-weight: 700;
+        background: var(--brand-amber);
+        color: #fff;
+        border: none;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .home-checkin-btn:hover {
+        background: var(--brand-amber-hover);
       }
     </style>
   </head>
   <body>
-    <main>
+    <header class="page-header">
+      <div class="page-header-logo">⚡</div>
+      <div>
+        <div class="page-header-title" id="pageHeaderTitle">Event Check-in</div>
+        <div class="page-header-subtitle">Event Check-in</div>
+      </div>
+    </header>
+
+    <div class="page-body">
       <div class="card">
         <div class="layout-grid" id="layoutGrid">
           <div class="left-column">
-            <h1>📋 Event Check-in</h1>
-            <p class="welcome">
-              Welcome! Please fill in your details to check in for the event.
+            <h2 class="form-heading">Welcome! 👋</h2>
+            <p class="form-subheading">
+              Fill in your details to check in and get your name tag.
             </p>
 
             <form id="registrationForm">
               <div class="form-grid">
-                <section>
+                <div class="form-field">
                   <label for="firstName">First Name *</label>
-                  <input type="text" id="firstName" name="firstName" required />
-                </section>
-                <section>
+                  <input
+                    type="text"
+                    id="firstName"
+                    name="firstName"
+                    placeholder="Jane"
+                    required
+                  />
+                </div>
+                <div class="form-field">
                   <label for="lastName">Last Name *</label>
-                  <input type="text" id="lastName" name="lastName" required />
-                </section>
-                <section>
+                  <input
+                    type="text"
+                    id="lastName"
+                    name="lastName"
+                    placeholder="Smith"
+                    required
+                  />
+                </div>
+                <div class="form-field">
                   <label for="company">Company *</label>
-                  <input type="text" id="company" name="company" required />
-                </section>
-                <section>
+                  <input
+                    type="text"
+                    id="company"
+                    name="company"
+                    placeholder="Acme Energy"
+                    required
+                  />
+                </div>
+                <div class="form-field">
                   <label for="email">Email *</label>
-                  <input type="email" id="email" name="email" required />
-                </section>
-                <section class="full-row">
-                  <label for="contactPermission">
+                  <input
+                    type="email"
+                    id="email"
+                    name="email"
+                    placeholder="jane@example.com"
+                    required
+                  />
+                </div>
+                <div class="form-field full-row">
+                  <div class="checkbox-row">
                     <input
                       type="checkbox"
                       id="contactPermission"
                       name="contactPermission"
                     />
-                    I agree to be contacted about future events
-                  </label>
-                </section>
+                    <label for="contactPermission"
+                      >I agree to be contacted about future events</label
+                    >
+                  </div>
+                </div>
               </div>
 
-              <button type="submit">Check In</button>
+              <button type="submit" class="btn-checkin">Check In →</button>
             </form>
 
             <div id="message"></div>
           </div>
 
           <div class="right-column">
+            <div class="nametag-label">Your name tag preview</div>
             <div class="name-tag-wrap">
               <div class="name-tag" id="nameTagPreview">
-                <div class="name-tag-content" id="nameTagContent">
+                <div class="name-tag-header">
                   <div class="name-tag-group" id="previewEventName">
-                    Energy &amp; Utilities Connect Sydney
+                    Energy &amp; Utilities Connect
                   </div>
                   <div class="name-tag-location" id="previewEventLocation">
                     Sydney
                   </div>
-                  <hr class="name-tag-divider" />
+                </div>
+                <div class="name-tag-name-zone">
                   <div class="name-tag-name placeholder" id="previewName">
                     YOUR NAME
                   </div>
-                  <hr class="name-tag-divider" />
+                </div>
+                <div class="name-tag-footer">
                   <div class="name-tag-company placeholder" id="previewCompany">
                     YOUR COMPANY
                   </div>
@@ -305,12 +541,12 @@
         </div>
 
         <div class="home-screen" id="homeScreen">
-          <p class="home-title">✅ Check-in successful</p>
+          <p class="home-title">✅ Checked in!</p>
           <p class="home-subtitle" id="homeSubtitle">
             Ready for the next attendee.
           </p>
           <button type="button" class="home-checkin-btn" id="homeCheckInBtn">
-            Check In
+            Next Check-in →
           </button>
         </div>
 
@@ -318,7 +554,7 @@
           Printer status: checking...
         </div>
       </div>
-    </main>
+    </div>
 
     <script>
       const form = document.getElementById("registrationForm");
@@ -332,11 +568,12 @@
       );
       const previewName = document.getElementById("previewName");
       const previewCompany = document.getElementById("previewCompany");
+      const pageHeaderTitle = document.getElementById("pageHeaderTitle");
       const previewEventName = document.getElementById("previewEventName");
       const previewEventLocation = document.getElementById(
         "previewEventLocation",
       );
-      const nameTagContent = document.getElementById("nameTagContent");
+      const nameTagContent = document.getElementById("nameTagPreview");
       const firstNameInput = document.getElementById("firstName");
       const companyInput = document.getElementById("company");
       const API_BASE =
@@ -385,6 +622,9 @@
           if (config?.eventLocation) {
             previewEventLocation.textContent = config.eventLocation;
           }
+          const name = config?.eventName || previewEventName.textContent;
+          const loc = config?.eventLocation || previewEventLocation.textContent;
+          pageHeaderTitle.textContent = loc ? `${name} · ${loc}` : name;
           updatePreview();
         } catch (error) {
           console.warn("Config load skipped:", error);

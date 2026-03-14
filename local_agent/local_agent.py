@@ -370,6 +370,96 @@ def count_queued_jobs(conn, cfg: AgentConfig) -> int:
         return int(row[0] if row else 0)
 
 
+def get_queued_jobs(conn, cfg: AgentConfig, limit: int = 200) -> list[dict[str, Any]]:
+    """Return all non-printed jobs (queued, claimed, dead, etc.) for queue visibility."""
+    if cfg.local_run:
+        jobs = _load_local_queue(cfg)
+        results: list[dict[str, Any]] = []
+        for job in jobs:
+            status = str(job.get("status") or "")
+            if status == "printed":
+                continue
+            try:
+                payload = json.loads(job.get("payload_json") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                payload = {}
+            results.append(
+                {
+                    "status": status,
+                    "name": payload.get("name"),
+                    "company": payload.get("company"),
+                    "attempts": f"{job.get('attempt_count', 0)}/{job.get('max_attempts', '?')}",
+                    "created_at": (job.get("created_at") or "")[:19].replace("T", " "),
+                    "error": (job.get("error_message") or "")[:80] or None,
+                    "job_id": job.get("job_id"),
+                }
+            )
+        results.sort(key=lambda item: _local_sort_key(item, "created_at"))
+        return results[: max(1, min(limit, 500))]
+
+    filter_clause = "AND (printer_id = ? OR printer_id IS NULL)" if cfg.printer_id else ""
+    params = [cfg.printer_id] if cfg.printer_id else []
+    sql_text = f"""
+        SELECT job_id, printer_id, attempt_count, created_at, error_message
+        FROM {cfg.queue_table}
+        WHERE status = 'queued'
+          {filter_clause}
+          AND (next_attempt_at IS NULL OR next_attempt_at <= current_timestamp())
+        ORDER BY created_at ASC
+        LIMIT {max(1, min(limit, 500))}
+    """
+    with conn.cursor() as cursor:
+        cursor.execute(sql_text, params)
+        rows = cursor.fetchall() or []
+    return [
+        {
+            "job_id": row[0],
+            "printer_id": row[1],
+            "attempt_count": row[2],
+            "created_at": str(row[3]) if row[3] is not None else None,
+            "error_message": row[4],
+        }
+        for row in rows
+    ]
+
+
+def cancel_job(conn, cfg: AgentConfig, job_id: str) -> bool:
+    """Mark a job as cancelled so it will not be picked up for printing.
+    Returns True if the job was found and updated, False otherwise.
+    """
+    if cfg.local_run:
+        jobs = _load_local_queue(cfg)
+        now = _to_iso_z(datetime.now(timezone.utc))
+        for job in jobs:
+            if str(job.get("job_id") or "") != job_id:
+                continue
+            # Allow cancelling any non-printed, non-already-cancelled job
+            if job.get("status") in ("printed", "cancelled"):
+                return False
+            job["status"] = "cancelled"
+            job["updated_at"] = now
+            job["claimed_by"] = None
+            job["claimed_at"] = None
+            job["claim_expires_at"] = None
+            _save_local_queue(cfg, jobs)
+            return True
+        return False
+
+    with conn.cursor() as cursor:
+        sql_text = f"""
+            UPDATE {cfg.queue_table}
+            SET status = 'cancelled',
+                updated_at = current_timestamp(),
+                claimed_by = NULL,
+                claimed_at = NULL,
+                claim_expires_at = NULL
+            WHERE job_id = ?
+              AND status NOT IN ('printed', 'cancelled')
+        """
+        cursor.execute(sql_text, [job_id])
+        return (cursor.rowcount or 0) > 0
+
+
 def get_recent_jobs(conn, cfg: AgentConfig, limit: int = 20) -> list[dict[str, Any]]:
     if cfg.local_run:
         jobs = _load_local_queue(cfg)

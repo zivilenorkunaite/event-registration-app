@@ -129,67 +129,69 @@
       .name-tag {
         background: #fff;
         color: #1a1a1a;
-        border-radius: 10px;
+        border-radius: 6px;
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        width: 80mm;
-        height: 50mm;
-        max-width: 80mm;
-        padding: 3mm 5mm;
-        box-sizing: border-box;
+        width: 70mm;
+        height: 40mm;
+        max-width: 70mm;
+        position: relative;
+        overflow: hidden;
       }
-      .name-tag-left {
-        display: flex;
-        flex-direction: column;
+      .name-tag-content {
+        position: absolute;
+        inset: 3% 0 4% 0;
+        padding: 0 10px;
+        display: grid;
+        grid-template-rows: 1fr 1fr auto 7fr auto 1fr;
+        align-items: center;
+        box-sizing: border-box;
       }
       .name-tag-group,
       .name-tag-location {
-        font-size: 0.5rem;
+        font-size: 0.72rem;
         font-weight: 500;
-        color: #999;
+        color: #1a1a1a;
         letter-spacing: 0.05em;
         text-transform: uppercase;
-        line-height: 1.2;
+        line-height: 1;
+        text-align: center;
       }
       .name-tag-divider {
         border: none;
-        border-top: 0.5px solid #ddd;
-        margin: 1mm 0;
+        border-top: 1px solid #ddd;
+        margin: 0;
+        width: 100%;
       }
       .name-tag-name {
-        font-size: 1.2rem;
+        font-size: 2rem;
         font-weight: 800;
         color: #000;
         letter-spacing: 0.02em;
         text-transform: uppercase;
-        line-height: 1.1;
-        flex: 1 1 auto;
+        line-height: 1;
         display: flex;
         align-items: center;
         justify-content: center;
+        text-align: center;
         word-wrap: break-word;
         word-break: break-word;
         overflow: hidden;
         min-height: 0;
-        padding: 1mm 2mm;
-      }
-      .name-tag-name.font-medium {
-        font-size: 1rem;
-      }
-      .name-tag-name.font-small {
-        font-size: 0.8rem;
+        padding: 0;
       }
       .name-tag-name.placeholder,
       .name-tag-company.placeholder {
         color: #ccc;
       }
       .name-tag-company {
-        font-size: 0.5rem;
+        font-size: 0.78rem;
         font-weight: 600;
-        color: #333;
+        color: #1a1a1a;
         text-align: center;
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .home-screen {
         display: none;
@@ -281,25 +283,21 @@
           <div class="right-column">
             <div class="name-tag-wrap">
               <div class="name-tag" id="nameTagPreview">
-                <div class="name-tag-left">
+                <div class="name-tag-content" id="nameTagContent">
                   <div class="name-tag-group" id="previewEventName">
                     Energy &amp; Utilities Connect Sydney
                   </div>
                   <div class="name-tag-location" id="previewEventLocation">
                     Sydney
                   </div>
-                </div>
-
-                <hr class="name-tag-divider" />
-
-                <div class="name-tag-name placeholder" id="previewName">
-                  YOUR NAME
-                </div>
-
-                <hr class="name-tag-divider" />
-
-                <div class="name-tag-company placeholder" id="previewCompany">
-                  YOUR COMPANY
+                  <hr class="name-tag-divider" />
+                  <div class="name-tag-name placeholder" id="previewName">
+                    YOUR NAME
+                  </div>
+                  <hr class="name-tag-divider" />
+                  <div class="name-tag-company placeholder" id="previewCompany">
+                    YOUR COMPANY
+                  </div>
                 </div>
               </div>
             </div>
@@ -338,6 +336,7 @@
       const previewEventLocation = document.getElementById(
         "previewEventLocation",
       );
+      const nameTagContent = document.getElementById("nameTagContent");
       const firstNameInput = document.getElementById("firstName");
       const companyInput = document.getElementById("company");
       const API_BASE =
@@ -386,27 +385,87 @@
           if (config?.eventLocation) {
             previewEventLocation.textContent = config.eventLocation;
           }
+          updatePreview();
         } catch (error) {
           console.warn("Config load skipped:", error);
         }
       }
 
+      function fitTextToBox(element, text, opts = {}) {
+        const maxSize = opts.maxSize ?? 40;
+        const minSize = opts.minSize ?? 10;
+        const fontWeight = opts.fontWeight ?? 700;
+        const displayText = String(text || " ");
+        const boxWidth = Math.max(1, element.clientWidth - 2);
+        const boxHeight = Math.max(1, element.clientHeight - 2);
+
+        if (!boxWidth || !boxHeight) {
+          return;
+        }
+
+        if (!fitTextToBox.canvas) {
+          fitTextToBox.canvas = document.createElement("canvas");
+        }
+        const context = fitTextToBox.canvas.getContext("2d");
+
+        let size = minSize;
+        for (let candidate = maxSize; candidate >= minSize; candidate -= 1) {
+          context.font = `${fontWeight} ${candidate}px Arial, Helvetica, sans-serif`;
+          const measuredWidth = context.measureText(displayText).width;
+          const estimatedHeight = candidate * 1.04;
+          if (measuredWidth <= boxWidth && estimatedHeight <= boxHeight) {
+            size = candidate;
+            break;
+          }
+        }
+
+        element.style.fontSize = `${size}px`;
+      }
+
       function updatePreview() {
-        const firstName = firstNameInput.value.trim();
+        const firstName = firstNameInput.value.trim().toUpperCase();
         const company = companyInput.value.trim();
 
         previewName.textContent = firstName || "YOUR NAME";
         previewName.classList.toggle("placeholder", !firstName);
-        previewName.classList.remove("font-medium", "font-small");
-
-        if (firstName.length > 11) {
-          previewName.classList.add("font-small");
-        } else if (firstName.length > 8) {
-          previewName.classList.add("font-medium");
-        }
 
         previewCompany.textContent = company || "YOUR COMPANY";
         previewCompany.classList.toggle("placeholder", !company);
+
+        if (!nameTagContent) {
+          return;
+        }
+
+        requestAnimationFrame(() => {
+          fitTextToBox(
+            previewEventName,
+            previewEventName.textContent.toUpperCase(),
+            {
+              maxSize: 16,
+              minSize: 10,
+              fontWeight: 500,
+            },
+          );
+          fitTextToBox(
+            previewEventLocation,
+            previewEventLocation.textContent.toUpperCase(),
+            {
+              maxSize: 15,
+              minSize: 10,
+              fontWeight: 500,
+            },
+          );
+          fitTextToBox(previewName, previewName.textContent, {
+            maxSize: 72,
+            minSize: 20,
+            fontWeight: 800,
+          });
+          fitTextToBox(previewCompany, previewCompany.textContent, {
+            maxSize: 30,
+            minSize: 12,
+            fontWeight: 600,
+          });
+        });
       }
 
       firstNameInput.addEventListener("input", updatePreview);
@@ -414,6 +473,7 @@
       loadFrontendConfig();
       refreshPrinterStatus();
       updatePreview();
+      window.addEventListener("resize", updatePreview);
 
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -444,6 +504,7 @@
               company: data.company,
               groupName: previewEventName.textContent,
               location: previewEventLocation.textContent,
+              registrationId: result.registrationId || null,
             };
 
             let didPrint = false;

@@ -168,9 +168,20 @@ def generate_nametag_image(opts: dict) -> bytes:
     """
     Generate name tag PNG for Niimbot B3S/B3S_P using env-configured label size.
 
+    Layout (top → bottom):
+      ┌────────────────────────────────────────┐
+      │  DARK HEADER: event name + · + location │  ~22% h
+      ├────────────────────────────────────────┤
+      │                                        │
+      │            FIRST NAME                  │  ~58% h
+      │                                        │
+      ├─ thin rule ────────────────────────────┤
+      │  Company Name                          │  ~20% h
+      └────────────────────────────────────────┘
+
     Args:
         opts: Dictionary with keys:
-            - name: Person's name (uppercase)
+            - name: Person's name (will be uppercased)
             - company: Company name
             - groupName: Event/group name
             - location: Location name
@@ -181,121 +192,78 @@ def generate_nametag_image(opts: dict) -> bytes:
     group_name = (opts.get("groupName") or "Energy & Utilities Data Connect").upper()
     location = (opts.get("location") or "Sydney").upper()
     name = (opts.get("name") or "YOUR NAME").upper()
-    company = opts.get("company") or "Company"
+    company = (opts.get("company") or "Company").upper()
 
     w = LABEL_WIDTH_PX
     h = LABEL_HEIGHT_PX
-    padding = SVG_CONFIG["padding"]
+    pad = 14  # horizontal padding inside all bands
 
-    # Create white image
-    img = Image.new("RGB", (w, h), color="white")
+    img = Image.new("RGB", (w, h), color="#ffffff")
     draw = ImageDraw.Draw(img)
 
-    # Add outer breathing room (top/bottom), then apply requested proportions inside.
-    top_margin = max(8, round(h * 0.03))
-    bottom_margin = max(10, round(h * 0.04))
-    content_top = top_margin
-    content_bottom = h - bottom_margin
-    content_h = max(12, content_bottom - content_top)
+    # ── Header band ───────────────────────────────────────────────────────────
+    # Dark filled rectangle spanning full width.
+    header_h = round(h * 0.23)
+    draw.rectangle([(0, 0), (w, header_h)], fill="#1a1a1a")
 
-    # Vertical allocation requested:
-    # - Name: 75% of content height
-    # - Remaining 25% split equally between group/location/company (~8.33% each)
-    small_h = max(1, round(content_h / 12))
-    name_h = max(1, content_h - (small_h * 3))
-
-    group_top = content_top
-    group_bottom = group_top + small_h
-    location_top = group_bottom
-    location_bottom = location_top + small_h
-    name_top = location_bottom
-    company_bottom = content_bottom
-
-    divider_color = SVG_CONFIG["divider_color"]
-    text_color = SVG_CONFIG["text_color"]
-
-    # Extra visual separation between event name and location text
-    event_location_gap = max(4, round(h * 0.012))
-    group_text_bottom = max(group_top + 1, group_bottom - (event_location_gap // 2))
-    location_text_top = min(location_bottom - 1, location_top + (event_location_gap // 2))
-    divider_text_gap = max(8, round(h * 0.025))
-
-    # Keep divider distances symmetric from top and bottom of content area.
-    top_divider_y = location_bottom
-    top_divider_offset = top_divider_y - content_top
-    bottom_divider_y = content_bottom - top_divider_offset
-    bottom_divider_y = max(top_divider_y + max(28, round(h * 0.09)), bottom_divider_y)
-    bottom_divider_y = min(content_bottom - max(14, round(h * 0.045)), bottom_divider_y)
-    company_top = bottom_divider_y
-
-    # Keep text farther from divider lines
-    location_text_bottom = max(location_text_top + 1, top_divider_y - divider_text_gap)
-    name_text_top = min(bottom_divider_y - 1, name_top + divider_text_gap)
-    name_text_bottom = max(name_text_top + 1, bottom_divider_y - divider_text_gap)
-    company_divider_gap = max(4, round(h * 0.012))
-    company_text_top = min(company_bottom - 1, company_top + company_divider_gap)
-
+    # Event name takes ~62% of header height, location the remaining 38%.
+    group_band_bottom = round(header_h * 0.62)
     _draw_centered_in_band(
         draw=draw,
         text=group_name,
-        top=group_top,
-        bottom=group_text_bottom,
+        top=2,
+        bottom=group_band_bottom,
         width=w,
-        padding=padding,
-        text_color=text_color,
-        max_size=38,
-        min_size=12,
+        padding=pad,
+        text_color="#ffffff",
+        max_size=26,
+        min_size=10,
+        max_height_ratio=0.78,
     )
     _draw_centered_in_band(
         draw=draw,
         text=location,
-        top=location_text_top,
-        bottom=location_text_bottom,
+        top=group_band_bottom,
+        bottom=header_h - 2,
         width=w,
-        padding=padding,
-        text_color=text_color,
-        max_size=32,
-        min_size=11,
+        padding=pad,
+        text_color="#aaaaaa",
+        max_size=18,
+        min_size=9,
+        max_height_ratio=0.78,
     )
 
-    # Single top divider under location
-    draw.line(
-        [(padding, top_divider_y), (w - padding, top_divider_y)],
-        fill=divider_color,
-        width=SVG_CONFIG["divider_width"],
-    )
-
-    # Lower divider between name and company (symmetrical placement)
-    draw.line(
-        [(padding, bottom_divider_y), (w - padding, bottom_divider_y)],
-        fill=divider_color,
-        width=SVG_CONFIG["divider_width"],
-    )
-
+    # ── Name zone ─────────────────────────────────────────────────────────────
+    footer_h = round(h * 0.21)
+    name_top = header_h + 4
+    name_bottom = h - footer_h - 4
     _draw_centered_in_band(
         draw=draw,
         text=name,
-        top=name_text_top,
-        bottom=name_text_bottom,
+        top=name_top,
+        bottom=name_bottom,
         width=w,
-        padding=padding,
-        text_color=text_color,
+        padding=pad,
+        text_color="#000000",
         max_size=300,
-        min_size=24,
-        max_height_ratio=0.62,
+        min_size=28,
+        max_height_ratio=0.70,
     )
 
+    # ── Separator & company footer ────────────────────────────────────────────
+    sep_y = h - footer_h
+    draw.line([(pad, sep_y), (w - pad, sep_y)], fill="#cccccc", width=1)
     _draw_centered_in_band(
         draw=draw,
         text=company,
-        top=company_text_top,
-        bottom=company_bottom,
+        top=sep_y + 3,
+        bottom=h - 5,
         width=w,
-        padding=padding,
-        text_color=text_color,
-        max_size=80,
-        min_size=14,
-        max_height_ratio=0.82,
+        padding=pad,
+        text_color="#444444",
+        max_size=60,
+        min_size=12,
+        max_height_ratio=0.75,
     )
 
     # Convert to PNG buffer

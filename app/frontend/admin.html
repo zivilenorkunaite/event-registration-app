@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin - Attendees</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
+    />
+    <style>
+      body {
+        padding: 1.5rem 1rem;
+      }
+      main {
+        max-width: 1280px;
+        margin: 0 auto;
+      }
+      .top-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+      .muted {
+        color: var(--pico-muted-color);
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: 1.5fr 1fr 1fr auto;
+        gap: 0.75rem;
+        align-items: end;
+        margin: 0.75rem 0 1rem;
+      }
+      .controls label {
+        margin-bottom: 0;
+      }
+      .controls input,
+      .controls select {
+        margin-bottom: 0;
+      }
+      @media (max-width: 920px) {
+        .controls {
+          grid-template-columns: 1fr;
+          align-items: stretch;
+        }
+      }
+      table {
+        font-size: 0.92rem;
+      }
+      td,
+      th {
+        vertical-align: top;
+        white-space: nowrap;
+      }
+      .empty {
+        margin-top: 1rem;
+        padding: 1rem;
+        border: 1px solid var(--pico-muted-border-color);
+        border-radius: 8px;
+      }
+      .error {
+        margin-top: 1rem;
+        padding: 1rem;
+        border-radius: 8px;
+        background: rgba(220, 53, 69, 0.12);
+        color: #b02a37;
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="top-row">
+        <h2>Admin · Registered Attendees</h2>
+        <a href="/" role="button" class="secondary">Back to Check-in</a>
+      </div>
+      <p class="muted" id="summary">Loading attendees...</p>
+
+      <div class="controls" id="controls" style="display: none">
+        <label>
+          Search
+          <input
+            id="searchInput"
+            type="search"
+            placeholder="Name, email, company"
+          />
+        </label>
+        <label>
+          Contact Permission
+          <select id="contactFilter">
+            <option value="all">All</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
+        <label>
+          Sort
+          <select id="sortBy">
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="name_asc">Name A→Z</option>
+            <option value="name_desc">Name Z→A</option>
+            <option value="company_asc">Company A→Z</option>
+          </select>
+        </label>
+        <button id="exportCsvBtn" class="secondary" type="button">
+          Export CSV
+        </button>
+      </div>
+
+      <div id="error" class="error" style="display: none"></div>
+      <div id="empty" class="empty" style="display: none">
+        No attendees yet.
+      </div>
+
+      <div class="table-wrap" id="tableWrap" style="display: none">
+        <table id="attendeesTable">
+          <thead id="tableHead"></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+    </main>
+
+    <script>
+      const summary = document.getElementById("summary");
+      const errorBox = document.getElementById("error");
+      const emptyBox = document.getElementById("empty");
+      const tableWrap = document.getElementById("tableWrap");
+      const tableHead = document.getElementById("tableHead");
+      const tableBody = document.getElementById("tableBody");
+      const controls = document.getElementById("controls");
+      const searchInput = document.getElementById("searchInput");
+      const contactFilter = document.getElementById("contactFilter");
+      const sortBy = document.getElementById("sortBy");
+      const exportCsvBtn = document.getElementById("exportCsvBtn");
+
+      let allAttendees = [];
+      let currentRows = [];
+      let currentOrderedKeys = [];
+
+      const API_BASE =
+        window.location.port === "8080"
+          ? `${window.location.protocol}//${window.location.hostname}:8000`
+          : "";
+
+      function formatHeader(key) {
+        return key
+          .replaceAll("_", " ")
+          .replace(/\b\w/g, (char) => char.toUpperCase());
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function normalizeText(value) {
+        return String(value ?? "")
+          .trim()
+          .toLowerCase();
+      }
+
+      function parseCreatedAt(attendee) {
+        const raw = attendee.created_at;
+        const timestamp = Date.parse(raw || "");
+        return Number.isNaN(timestamp) ? 0 : timestamp;
+      }
+
+      function attendeeName(attendee) {
+        const first = normalizeText(attendee.first_name || attendee.name);
+        const last = normalizeText(attendee.last_name);
+        return `${first} ${last}`.trim();
+      }
+
+      function buildOrderedKeys(attendees) {
+        const keys = new Set();
+        attendees.forEach((attendee) => {
+          Object.keys(attendee).forEach((key) => {
+            if (key !== "nametag_image_url") {
+              keys.add(key);
+            }
+          });
+        });
+
+        return [
+          "id",
+          "first_name",
+          "last_name",
+          "company",
+          "company_email",
+          "contact_permission",
+          "created_at",
+          ...Array.from(keys).filter(
+            (key) =>
+              ![
+                "id",
+                "first_name",
+                "last_name",
+                "company",
+                "company_email",
+                "contact_permission",
+                "created_at",
+                "nametag_image_filename",
+              ].includes(key),
+          ),
+          "nametag_image_filename",
+        ].filter(
+          (key, index, arr) => arr.indexOf(key) === index && keys.has(key),
+        );
+      }
+
+      function applyFiltersAndSort(attendees) {
+        const query = normalizeText(searchInput.value);
+        const permission = contactFilter.value;
+        const sort = sortBy.value;
+
+        const filtered = attendees.filter((attendee) => {
+          const isPermissionMatch =
+            permission === "all"
+              ? true
+              : permission === "yes"
+                ? attendee.contact_permission === true
+                : attendee.contact_permission === false;
+
+          if (!isPermissionMatch) {
+            return false;
+          }
+
+          if (!query) {
+            return true;
+          }
+
+          const haystack = [
+            attendee.first_name,
+            attendee.last_name,
+            attendee.name,
+            attendee.company,
+            attendee.company_email,
+          ]
+            .map(normalizeText)
+            .join(" ");
+
+          return haystack.includes(query);
+        });
+
+        filtered.sort((a, b) => {
+          if (sort === "oldest") {
+            return parseCreatedAt(a) - parseCreatedAt(b);
+          }
+          if (sort === "name_asc") {
+            return attendeeName(a).localeCompare(attendeeName(b));
+          }
+          if (sort === "name_desc") {
+            return attendeeName(b).localeCompare(attendeeName(a));
+          }
+          if (sort === "company_asc") {
+            return normalizeText(a.company).localeCompare(
+              normalizeText(b.company),
+            );
+          }
+          return parseCreatedAt(b) - parseCreatedAt(a);
+        });
+
+        return filtered;
+      }
+
+      function renderTable(attendees) {
+        currentOrderedKeys = buildOrderedKeys(attendees);
+
+        const headerCells = currentOrderedKeys
+          .map((key) => `<th>${formatHeader(key)}</th>`)
+          .join("");
+        tableHead.innerHTML = `<tr>${headerCells}<th>Nametag</th></tr>`;
+
+        tableBody.innerHTML = attendees
+          .map((attendee) => {
+            const cells = currentOrderedKeys
+              .map((key) => `<td>${escapeHtml(attendee[key] ?? "")}</td>`)
+              .join("");
+            const linkCell = attendee.nametag_image_url
+              ? `<td><a href="${escapeHtml(attendee.nametag_image_url)}" target="_blank" rel="noopener">Open</a></td>`
+              : "<td>-</td>";
+            return `<tr>${cells}${linkCell}</tr>`;
+          })
+          .join("");
+      }
+
+      function updateView() {
+        currentRows = applyFiltersAndSort([...allAttendees]);
+
+        if (allAttendees.length === 0) {
+          summary.textContent = "Total attendees: 0";
+          emptyBox.style.display = "block";
+          tableWrap.style.display = "none";
+          exportCsvBtn.disabled = true;
+          return;
+        }
+
+        summary.textContent = `Total attendees: ${allAttendees.length} · Showing: ${currentRows.length}`;
+
+        if (currentRows.length === 0) {
+          emptyBox.textContent = "No attendees match the current filters.";
+          emptyBox.style.display = "block";
+          tableWrap.style.display = "none";
+          exportCsvBtn.disabled = true;
+          return;
+        }
+
+        emptyBox.style.display = "none";
+        emptyBox.textContent = "No attendees yet.";
+        renderTable(currentRows);
+        tableWrap.style.display = "block";
+        exportCsvBtn.disabled = false;
+      }
+
+      function csvEscape(value) {
+        const asText = String(value ?? "");
+        if (
+          asText.includes('"') ||
+          asText.includes(",") ||
+          asText.includes("\n")
+        ) {
+          return `"${asText.replaceAll('"', '""')}"`;
+        }
+        return asText;
+      }
+
+      function exportCsv() {
+        if (currentRows.length === 0) {
+          return;
+        }
+
+        const columns = [...currentOrderedKeys, "nametag_image_url"];
+        const header = columns
+          .map((key) => csvEscape(formatHeader(key)))
+          .join(",");
+        const rows = currentRows.map((attendee) =>
+          columns.map((key) => csvEscape(attendee[key] ?? "")).join(","),
+        );
+
+        const csvContent = [header, ...rows].join("\n");
+        const blob = new Blob([csvContent], {
+          type: "text/csv;charset=utf-8;",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "attendees.csv";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+
+      async function loadAttendees() {
+        try {
+          const response = await fetch(`${API_BASE}/api/admin/attendees`);
+          if (!response.ok) {
+            throw new Error(`Request failed (${response.status})`);
+          }
+
+          const payload = await response.json();
+          allAttendees = payload.attendees || [];
+          controls.style.display = allAttendees.length > 0 ? "grid" : "none";
+          updateView();
+        } catch (error) {
+          summary.textContent = "Failed to load attendees";
+          errorBox.textContent = error.message || "Unknown error";
+          errorBox.style.display = "block";
+        }
+      }
+
+      searchInput.addEventListener("input", updateView);
+      contactFilter.addEventListener("change", updateView);
+      sortBy.addEventListener("change", updateView);
+      exportCsvBtn.addEventListener("click", exportCsv);
+
+      loadAttendees();
+    </script>
+  </body>
+</html>

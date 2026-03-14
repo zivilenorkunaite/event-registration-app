@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from datetime import datetime, timezone
 from databricks import sql
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -10,21 +11,23 @@ from pathlib import Path
 # Global connection
 _connection = None
 _use_file_storage = False  # Flag to use JSON file when Databricks unavailable
-_data_file = Path(__file__).parent.parent.parent / "data" / "registrations.json"
+_data_file = Path(__file__).parent / "data" / "registrations.json"
 
 
 def _load_registrations() -> List[Dict[str, Any]]:
     """Load registrations from JSON file."""
     if _data_file.exists():
-        with open(_data_file, "r") as f:
-            return json.load(f)
+        with open(_data_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
     return []
 
 
 def _save_registrations(registrations: List[Dict[str, Any]]):
     """Save registrations to JSON file."""
     _data_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(_data_file, "w") as f:
+    with open(_data_file, "w", encoding="utf-8") as f:
         json.dump(registrations, f, indent=2, default=str)
 
 
@@ -122,16 +125,23 @@ async def save_registration(
         if _use_file_storage or _connection is None:
             # Use file storage
             registrations = await asyncio.to_thread(_load_registrations)
+
+            next_id = max(
+                (int(reg.get("id", 0)) for reg in registrations if str(reg.get("id", "")).isdigit()),
+                default=0,
+            ) + 1
+
             registrations.append({
+                "id": next_id,
                 "first_name": first_name,
                 "last_name": last_name,
                 "company": company,
                 "company_email": email,
                 "contact_permission": contact_permission,
-                "created_at": asyncio.get_event_loop().time(),
+                "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             })
             await asyncio.to_thread(_save_registrations, registrations)
-            return 1
+            return next_id
         
         await execute_query(
             """
@@ -144,6 +154,38 @@ async def save_registration(
         return 1  # Success
     except Exception as e:
         print(f"❌ save_registration failed: {e}")
+        raise
+
+
+async def attach_nametag_filename(registration_id: int, nametag_filename: str) -> None:
+    """Persist nametag image filename on a registration record."""
+    try:
+        if _use_file_storage or _connection is None:
+            registrations = await asyncio.to_thread(_load_registrations)
+            updated = False
+
+            for registration in registrations:
+                if int(registration.get("id", 0)) == int(registration_id):
+                    registration["nametag_image_filename"] = nametag_filename
+                    updated = True
+                    break
+
+            if updated:
+                await asyncio.to_thread(_save_registrations, registrations)
+            else:
+                print(f"⚠️ Registration id {registration_id} not found for nametag attachment")
+            return
+
+        await execute_query(
+            """
+            UPDATE main.default.event_registrations
+            SET nametag_image_filename = ?
+            WHERE id = ?
+            """,
+            [nametag_filename, registration_id],
+        )
+    except Exception as e:
+        print(f"❌ attach_nametag_filename failed: {e}")
         raise
 
 

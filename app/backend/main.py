@@ -1,6 +1,7 @@
 """FastAPI backend server for event registration and name tag printing."""
 
 import base64
+import json
 import os
 import re
 from contextlib import asynccontextmanager
@@ -42,6 +43,7 @@ class PrintRequest(BaseModel):
     company: Optional[str] = ""
     groupName: Optional[str] = None
     location: Optional[str] = None
+    registrationId: Optional[int] = None
 
 
 # Global configuration
@@ -108,6 +110,10 @@ else:
 IMAGES_DIR = Path(app_dir) / "data" / "images"
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
+LOCAL_REGISTRATIONS_FILE = Path(app_dir) / "data" / "registrations.json"
+
+app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
+
 
 def _get_next_image_counter(images_dir: Path) -> int:
     """Get the next monotonically increasing image counter from saved files."""
@@ -122,15 +128,61 @@ def _get_next_image_counter(images_dir: Path) -> int:
     return max_counter + 1
 
 
-def _save_nametag_image(image_buffer: bytes, name_display: str) -> tuple[int, str, str]:
+def _save_nametag_image(
+    image_buffer: bytes, name_display: str, registration_id: Optional[int] = None
+) -> tuple[int, str, str]:
     """Save name tag image to local file storage with incremental counter prefix."""
-    counter = _get_next_image_counter(IMAGES_DIR)
+    counter = registration_id if registration_id is not None else _get_next_image_counter(IMAGES_DIR)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     safe_name = name_display.replace(" ", "_")
-    filename = f"{counter:06d}_nametag_{safe_name}_{timestamp}.png"
+    filename = f"{counter}_nametag_{safe_name}_{timestamp}.png"
     file_path = IMAGES_DIR / filename
     file_path.write_bytes(image_buffer)
     return counter, filename, str(file_path)
+
+
+def _load_local_registrations() -> list[dict]:
+    """Load registrations from local JSON file used by file fallback storage."""
+    if not LOCAL_REGISTRATIONS_FILE.exists():
+        return []
+
+    try:
+        with LOCAL_REGISTRATIONS_FILE.open("r", encoding="utf-8") as file_handle:
+            data = json.load(file_handle)
+            if isinstance(data, list):
+                return data
+    except Exception as exc:
+        print(f"⚠️ Failed to read local registrations: {exc}")
+
+    return []
+
+
+def _find_latest_nametag_for_first_name(first_name: str) -> Optional[str]:
+    """Best-effort match: latest nametag image for first name based on filename."""
+    safe_name = (first_name or "").strip().upper().replace(" ", "_")
+    if not safe_name:
+        return None
+
+    pattern = f"*_nametag_{safe_name}_*.png"
+    matches = list(IMAGES_DIR.glob(pattern))
+    if not matches:
+        return None
+
+    latest = max(matches, key=lambda path: path.stat().st_mtime)
+    return latest.name
+
+
+def _get_first_name_for_match(registration: dict) -> str:
+    """Extract first name from either first_name or legacy name field."""
+    first_name = str(registration.get("first_name") or "").strip()
+    if first_name:
+        return first_name
+
+    full_name = str(registration.get("name") or "").strip()
+    if full_name:
+        return full_name.split(" ")[0]
+
+    return ""
 
 
 async def _check_printer_available() -> dict:
@@ -243,7 +295,7 @@ async def register(req: RegistrationRequest):
             return {"message": "Check-in successful! Welcome back."}
 
         # Save registration
-        await db.save_registration(
+        registration_id = await db.save_registration(
             first_name=first_name,
             last_name=last_name,
             email=email,
@@ -251,7 +303,10 @@ async def register(req: RegistrationRequest):
             contact_permission=req.contactPermission,
         )
 
-        return {"message": "Check-in successful! Welcome."}
+        return {
+            "message": "Check-in successful! Welcome.",
+            "registrationId": registration_id,
+        }
 
     except HTTPException:
         raise
@@ -287,7 +342,17 @@ async def print_nametag(req: PrintRequest):
             }
         )
 
-        image_id, png_filename, saved_path = _save_nametag_image(image_buffer, name_display)
+        image_id, png_filename, saved_path = _save_nametag_image(
+            image_buffer,
+            name_display,
+            registration_id=req.registrationId,
+        )
+
+        if req.registrationId is not None:
+            try:
+                await db.attach_nametag_filename(req.registrationId, png_filename)
+            except Exception as exc:
+                print(f"⚠️ Could not attach nametag filename to registration: {exc}")
 
         printer = await _check_printer_available()
 
@@ -339,6 +404,7 @@ async def print_nametag(req: PrintRequest):
                 "location": location,
                 "name": name_display,
                 "company": company_val,
+                "registrationId": req.registrationId,
             },
         }
 
@@ -367,6 +433,30 @@ async def get_registrations(limit: Optional[int] = None):
         raise HTTPException(status_code=500, detail=f"Failed to fetch registrations: {str(e)}")
 
 
+@app.get("/api/admin/attendees")
+async def get_admin_attendees():
+    """Admin attendees list from local JSON storage with nametag image links."""
+    registrations = _load_local_registrations()
+    attendees: list[dict] = []
+
+    for registration in registrations:
+        image_filename = registration.get("nametag_image_filename")
+        if not image_filename:
+            first_name = _get_first_name_for_match(registration)
+            image_filename = _find_latest_nametag_for_first_name(first_name)
+
+        attendees.append(
+            {
+                **registration,
+                "nametag_image_filename": image_filename,
+                "nametag_image_url": f"/images/{image_filename}" if image_filename else None,
+            }
+        )
+
+    attendees.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
+    return {"attendees": attendees, "count": len(attendees)}
+
+
 @app.get("/")
 async def root():
     """Serve the HTML frontend."""
@@ -375,3 +465,13 @@ async def root():
         if os.path.exists(html_file):
             return FileResponse(html_file, media_type="text/html")
     return {"message": "Event Registration Backend API"}
+
+
+@app.get("/admin")
+async def admin_page():
+    """Serve the admin attendees page."""
+    for candidate in root_candidates:
+        html_file = os.path.join(candidate, "admin.html")
+        if os.path.exists(html_file):
+            return FileResponse(html_file, media_type="text/html")
+    raise HTTPException(status_code=404, detail="Admin page not found")

@@ -1,6 +1,7 @@
 # Event Registration App
 
 Event check-in app with:
+
 - **FastAPI backend** (`app/backend`)
 - **Vite frontend** (`app/frontend`)
 - **Optional Niimbot printing** through `@mmote/niimblue-node`
@@ -60,6 +61,7 @@ bash scripts/start_quick_app.sh
 ```
 
 App URLs:
+
 - Frontend: `http://localhost:8080`
 - Backend API: `http://localhost:8000`
 - Admin page: `http://localhost:8080/admin`
@@ -96,6 +98,42 @@ bash scripts/start_local_print_with_test.sh
 
 ---
 
+## Local agent (Databricks queue -> local printer)
+
+Use this when your main app is hosted remotely (for example Databricks Apps) but printing must happen on a local machine.
+
+### Minimum config in `.env`
+
+- Databricks SQL credentials (`DATABRICKS_HOST`, `DATABRICKS_WAREHOUSE_ID`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`)
+- Local printer bridge settings (`NIIMBOT_SERVER_URL`, `NIIMBOT_TRANSPORT`, `NIIMBOT_ADDRESS`)
+- Local agent settings (`LOCAL_AGENT_QUEUE_TABLE`, `LOCAL_AGENT_ID`)
+
+Recommended:
+
+- Set `LOCAL_AGENT_PRINTER_ID` to the same value as `NIIMBOT_ADDRESS` so the agent only claims jobs intended for this printer.
+
+### Run local agent worker
+
+```bash
+cd local_agent
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python local_agent.py
+```
+
+### Run local agent UI
+
+```bash
+cd local_agent
+source .venv/bin/activate
+streamlit run ui.py
+```
+
+UI is useful for manual operations (connect printer, print next job, inspect queue).
+
+---
+
 ## Environment variables
 
 See `.env.example` for the full list.
@@ -126,6 +164,19 @@ If these are unset, app uses local JSON fallback:
 - `DATABRICKS_CATALOG` (optional)
 - `DATABRICKS_SCHEMA` (optional)
 - `DATABRICKS_VOLUME_PATH` (optional)
+
+### Local agent (optional)
+
+- `LOCAL_AGENT_QUEUE_TABLE` (for example `main.default.print_jobs`)
+- `LOCAL_AGENT_PRINTER_ID` (recommended = `NIIMBOT_ADDRESS`)
+- `LOCAL_AGENT_POLL_SECONDS`
+- `LOCAL_AGENT_CLAIM_TTL_SECONDS`
+- `LOCAL_AGENT_MAX_RETRY_BACKOFF_SECONDS`
+- `LOCAL_AGENT_DEFAULT_MAX_ATTEMPTS`
+- `LOCAL_AGENT_ID`
+- `LOCAL_AGENT_AUTO_CONNECT`
+- `NIIMBOT_LABEL_WIDTH_PX` / `NIIMBOT_LABEL_HEIGHT_PX` (fallback when payload omits size)
+- `NIIMBOT_DEFAULT_QUANTITY` / `NIIMBOT_PRINT_DIRECTION` (fallback defaults)
 
 ---
 

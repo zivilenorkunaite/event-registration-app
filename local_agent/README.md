@@ -9,7 +9,7 @@ This runs **separately** from your current app and does not modify existing app 
 - Poll print jobs from a Databricks SQL/Delta-backed table
 - Claim a job safely so only one agent handles it
 - Send print to local Niimbot bridge (`niimblue-node`)
-- Update job status (`queued -> claimed -> printing -> printed/queued/dead`)
+- Update job status (`queued -> claimed -> printed/queued/dead`)
 
 ## Folder isolation
 

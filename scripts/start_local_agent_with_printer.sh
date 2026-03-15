@@ -27,6 +27,8 @@ set +a
 NIIMBOT_SERVER_URL="${NIIMBOT_SERVER_URL:-http://localhost:5050}"
 NIIMBOT_TRANSPORT="${NIIMBOT_TRANSPORT:-ble}"
 LOCAL_AGENT_LOCAL_RUN="${LOCAL_AGENT_LOCAL_RUN:-false}"
+LOCAL_AGENT_UI_PORT="${LOCAL_AGENT_UI_PORT:-8501}"
+LOCAL_AGENT_UI_LOG_FILE="${LOCAL_AGENT_UI_LOG_FILE:-/tmp/local-agent-ui.log}"
 
 URL_NO_PROTO="${NIIMBOT_SERVER_URL#http://}"
 URL_NO_PROTO="${URL_NO_PROTO#https://}"
@@ -65,6 +67,15 @@ else
   exit 1
 fi
 
+if [[ -x "$ROOT_DIR/.venv/bin/streamlit" ]]; then
+  STREAMLIT_BIN="$ROOT_DIR/.venv/bin/streamlit"
+elif command -v streamlit >/dev/null 2>&1; then
+  STREAMLIT_BIN="streamlit"
+else
+  echo "streamlit not found. Install Python dependencies first."
+  exit 1
+fi
+
 if [[ -z "${NIIMBOT_ADDRESS:-}" ]]; then
   echo "NIIMBOT_ADDRESS is empty. Set it in .env and rerun."
   exit 1
@@ -80,6 +91,9 @@ fi
 cleanup() {
   if [[ -n "${AGENT_PID:-}" ]]; then
     kill "$AGENT_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${UI_PID:-}" ]]; then
+    kill "$UI_PID" >/dev/null 2>&1 || true
   fi
   if [[ "${STARTED_NIIMBLUE:-0}" == "1" && -n "${NIIMBLUE_PID:-}" ]]; then
     kill "$NIIMBLUE_PID" >/dev/null 2>&1 || true
@@ -121,10 +135,18 @@ fi
 
 echo "Printer connected."
 echo "Starting local agent..."
-echo "Press Ctrl+C to stop local agent and niimblue (if started by this script)."
+echo "Starting local agent UI on http://localhost:${LOCAL_AGENT_UI_PORT} ..."
+echo "UI log: ${LOCAL_AGENT_UI_LOG_FILE}"
+echo "Press Ctrl+C to stop local agent, Streamlit UI, and niimblue (if started by this script)."
 
 cd "$ROOT_DIR"
 "$PYTHON_BIN" local_agent/local_agent.py &
 AGENT_PID=$!
 
+STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
+STREAMLIT_SERVER_HEADLESS=true \
+"$STREAMLIT_BIN" run local_agent/ui.py --server.address 0.0.0.0 --server.port "$LOCAL_AGENT_UI_PORT" >"$LOCAL_AGENT_UI_LOG_FILE" 2>&1 &
+UI_PID=$!
+
 wait "$AGENT_PID"
+wait "$UI_PID"

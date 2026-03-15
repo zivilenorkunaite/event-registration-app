@@ -180,7 +180,7 @@ def load_config() -> AgentConfig:
         local_run=local_run,
         local_queue_file=local_queue_file,
         printer_id=os.getenv("LOCAL_AGENT_PRINTER_ID", "").strip(),
-        agent_id=os.getenv("LOCAL_AGENT_ID", default_agent_id).strip(),
+        agent_id=(os.getenv("LOCAL_AGENT_ID", "").strip() or default_agent_id),
         poll_seconds=max(1, _env_int("LOCAL_AGENT_POLL_SECONDS", 2)),
         claim_ttl_seconds=max(10, _env_int("LOCAL_AGENT_CLAIM_TTL_SECONDS", 30)),
         max_retry_backoff_seconds=max(
@@ -574,33 +574,6 @@ def get_recent_jobs(conn, cfg: AgentConfig, limit: int = 20) -> list[dict[str, A
     return results
 
 
-def mark_printing(conn, cfg: AgentConfig, job: ClaimedJob) -> None:
-    if cfg.local_run:
-        jobs = _load_local_queue(cfg)
-        now = datetime.now(timezone.utc)
-        for item in jobs:
-            if str(item.get("job_id") or "") != job.job_id:
-                continue
-            if str(item.get("claimed_by") or "") != cfg.agent_id:
-                return
-            item["status"] = "printing"
-            item["updated_at"] = _to_iso_z(now)
-            item["claim_expires_at"] = _to_iso_z(now + timedelta(seconds=cfg.claim_ttl_seconds))
-            _save_local_queue(cfg, jobs)
-            return
-        return
-
-    with conn.cursor() as cursor:
-        sql_text = f"""
-            UPDATE {cfg.queue_table}
-            SET status = 'printing',
-                updated_at = current_timestamp(),
-                claim_expires_at = timestampadd(SECOND, ?, current_timestamp())
-            WHERE job_id = ? AND claimed_by = ?
-        """
-        cursor.execute(sql_text, [cfg.claim_ttl_seconds, job.job_id, cfg.agent_id])
-
-
 def mark_printed(conn, cfg: AgentConfig, job: ClaimedJob) -> None:
     if cfg.local_run:
         jobs = _load_local_queue(cfg)
@@ -745,6 +718,7 @@ def _resolve_print_payload(
 ) -> dict[str, Any]:
     # Allow either nested printRequest or top-level fields.
     print_request = payload.get("printRequest") if isinstance(payload.get("printRequest"), dict) else payload
+    resolved_payload = dict(print_request)
 
     image_base64 = print_request.get("imageBase64")
     image_url = print_request.get("imageUrl")
@@ -770,16 +744,23 @@ def _resolve_print_payload(
     if not image_base64:
         raise RuntimeError("Job payload must include imageBase64 or imageUrl")
 
-    return {
-        "imageBase64": image_base64,
-        "labelWidth": int(print_request.get("labelWidth") or cfg.label_width_px),
-        "labelHeight": int(print_request.get("labelHeight") or cfg.label_height_px),
-        "printTask": str(print_request.get("printTask") or cfg.niimbot_print_task),
-        "printDirection": str(
-            print_request.get("printDirection") or cfg.niimbot_print_direction
-        ),
-        "quantity": int(print_request.get("quantity") or cfg.niimbot_default_quantity),
-    }
+    resolved_payload["imageBase64"] = image_base64
+    resolved_payload["labelWidth"] = int(print_request.get("labelWidth") or cfg.label_width_px)
+    resolved_payload["labelHeight"] = int(print_request.get("labelHeight") or cfg.label_height_px)
+    resolved_payload["printTask"] = str(print_request.get("printTask") or cfg.niimbot_print_task)
+    resolved_payload["printDirection"] = str(
+        print_request.get("printDirection") or cfg.niimbot_print_direction
+    )
+    resolved_payload["quantity"] = int(
+        print_request.get("quantity") or cfg.niimbot_default_quantity
+    )
+
+    if not resolved_payload.get("imageFit"):
+        resolved_payload["imageFit"] = "contain"
+    if not resolved_payload.get("imagePosition"):
+        resolved_payload["imagePosition"] = "centre"
+
+    return resolved_payload
 
 
 def print_job_with_bridge(client: httpx.Client, cfg: AgentConfig, job: ClaimedJob) -> None:
@@ -812,7 +793,6 @@ def process_one_job(
         )
 
     try:
-        mark_printing(conn, cfg, claimed)
         print_job_with_bridge(client, cfg, claimed)
         mark_printed(conn, cfg, claimed)
         if logger:

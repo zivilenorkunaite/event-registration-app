@@ -235,7 +235,7 @@ st.markdown("---")
 
 all_jobs    = state["queued_jobs"]
 waiting     = [j for j in all_jobs if j.get("status") == "queued"]
-in_progress = [j for j in all_jobs if j.get("status") in ("claimed", "printing")]
+in_progress = [j for j in all_jobs if j.get("status") == "claimed"]
 queue_display = waiting + in_progress  # only active jobs shown here
 
 q_count = len(waiting) + len(in_progress)
@@ -280,7 +280,6 @@ if pending_id:
 STATUS_COLOR = {
     "queued":   "🟡",
     "claimed":  "🔵",
-    "printing": "🔵",
     "printed":  "🟢",
     "dead":     "🔴",
     "cancelled":"⚫",

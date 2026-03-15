@@ -4,6 +4,10 @@ from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 import os
 from typing import Optional
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 
 _FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
@@ -183,13 +187,19 @@ def generate_nametag_image(opts: dict) -> bytes:
     h = LABEL_HEIGHT_PX
     pad = 14  # horizontal padding inside all bands
 
-    img = Image.new("RGB", (w, h), color="#ffffff")
+    rotate_text_raw = (os.getenv("NIIMBOT_ROTATE_TEXT_90") or "false").strip().lower()
+    rotate_text_90 = rotate_text_raw in {"1", "true", "yes", "on"}
+
+    canvas_w = h if rotate_text_90 else w
+    canvas_h = w if rotate_text_90 else h
+
+    img = Image.new("RGB", (canvas_w, canvas_h), color="#ffffff")
     draw = ImageDraw.Draw(img)
 
     # ── Header band ───────────────────────────────────────────────────────────
     # Dark filled rectangle spanning full width.
-    header_h = round(h * 0.23)
-    draw.rectangle([(0, 0), (w, header_h)], fill="#1a1a1a")
+    header_h = round(canvas_h * 0.23)
+    draw.rectangle([(0, 0), (canvas_w, header_h)], fill="#1a1a1a")
 
     # Event name takes ~62% of header height, location the remaining 38%.
     group_band_bottom = round(header_h * 0.62)
@@ -198,7 +208,7 @@ def generate_nametag_image(opts: dict) -> bytes:
         text=group_name,
         top=2,
         bottom=group_band_bottom,
-        width=w,
+        width=canvas_w,
         padding=pad,
         text_color="#ffffff",
         max_size=26,
@@ -211,25 +221,25 @@ def generate_nametag_image(opts: dict) -> bytes:
         text=location,
         top=group_band_bottom,
         bottom=header_h - 2,
-        width=w,
+        width=canvas_w,
         padding=pad,
-        text_color="#aaaaaa",
+        text_color="#ffffff",
         max_size=18,
         min_size=9,
         max_height_ratio=0.78,
-        weight="regular",
+        weight="bold",
     )
 
     # ── Name zone ─────────────────────────────────────────────────────────────
-    footer_h = round(h * 0.21)
+    footer_h = round(canvas_h * 0.21)
     name_top = header_h + 4
-    name_bottom = h - footer_h - 4
+    name_bottom = canvas_h - footer_h - 4
     _draw_centered_in_band(
         draw=draw,
         text=name,
         top=name_top,
         bottom=name_bottom,
-        width=w,
+        width=canvas_w,
         padding=pad,
         text_color="#000000",
         max_size=300,
@@ -239,14 +249,14 @@ def generate_nametag_image(opts: dict) -> bytes:
     )
 
     # ── Separator & company footer ────────────────────────────────────────────
-    sep_y = h - footer_h
-    draw.line([(pad, sep_y), (w - pad, sep_y)], fill="#cccccc", width=3)
+    sep_y = canvas_h - footer_h
+    draw.line([(pad, sep_y), (canvas_w - pad, sep_y)], fill="#cccccc", width=3)
     _draw_centered_in_band(
         draw=draw,
         text=company,
         top=sep_y + 3,
-        bottom=h - 5,
-        width=w,
+        bottom=canvas_h - 5,
+        width=canvas_w,
         padding=pad,
         text_color="#444444",
         max_size=60,
@@ -254,6 +264,9 @@ def generate_nametag_image(opts: dict) -> bytes:
         max_height_ratio=0.75,
         weight="regular",
     )
+
+    if rotate_text_90:
+        img = img.rotate(-90, expand=True)
 
     # Convert to PNG buffer
     png_buffer = BytesIO()

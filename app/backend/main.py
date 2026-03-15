@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import httpx
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageOps
 
 from backend import db
 from backend.services.nametag import (
@@ -72,6 +72,11 @@ EVENT_NAME = os.getenv("EVENT_NAME", "Energy & Utilities Connect Sydney")
 EVENT_LOCATION = os.getenv("EVENT_LOCATION", "Sydney")
 IS_DATABRICKS_APP = bool(os.getenv("DATABRICKS_APP_NAME"))
 DATABRICKS_VOLUME_PATH = os.getenv("DATABRICKS_VOLUME_PATH", "").strip()
+
+
+def _resolve_print_task() -> str:
+    """Resolve printer task from environment configuration."""
+    return (os.getenv("NIIMBOT_PRINT_TASK") or "B1").strip()
 
 
 def _resolve_volume_images_dir(volume_value: str) -> Optional[Path]:
@@ -621,15 +626,36 @@ def _build_nametag_artifacts(
 
     print_buffer = image_buffer
 
-    if LABEL_HEIGHT_MM > LABEL_WIDTH_MM:
+    rotate_portrait_raw = (os.getenv("NIIMBOT_ROTATE_PORTRAIT") or "true").strip().lower()
+    rotate_portrait = rotate_portrait_raw in {"1", "true", "yes", "on"}
+
+    if rotate_portrait and LABEL_HEIGHT_MM > LABEL_WIDTH_MM:
         try:
             with Image.open(BytesIO(image_buffer)) as portrait_img:
                 rotated = portrait_img.rotate(-90, expand=True)
+
+                rotated_x_offset_raw = (os.getenv("NIIMBOT_ROTATED_X_OFFSET_PX") or "0").strip()
+                try:
+                    rotated_x_offset = int(rotated_x_offset_raw)
+                except ValueError:
+                    rotated_x_offset = 0
+
+                if rotated_x_offset != 0:
+                    shifted = Image.new("RGB", rotated.size, color=(255, 255, 255))
+                    shifted.paste(rotated.convert("RGB"), (rotated_x_offset, 0))
+                    rotated = shifted
+                    logger.info(
+                        "Applied rotated print horizontal offset | offset_px=%s",
+                        rotated_x_offset,
+                    )
+
                 rotated_buffer = BytesIO()
                 rotated.save(rotated_buffer, format="PNG")
                 print_buffer = rotated_buffer.getvalue()
         except Exception as rotate_exc:
             logger.warning("Portrait rotation failed; using original orientation | error=%s", rotate_exc)
+    elif LABEL_HEIGHT_MM > LABEL_WIDTH_MM:
+        logger.info("Portrait auto-rotation disabled; using non-rotated portrait payload")
 
     try:
         with Image.open(BytesIO(print_buffer)) as payload_img:
@@ -638,13 +664,30 @@ def _build_nametag_artifacts(
         print_label_width = LABEL_WIDTH_PX
         print_label_height = LABEL_HEIGHT_PX
 
+    try:
+        with Image.open(BytesIO(print_buffer)) as payload_img:
+            fitted = ImageOps.pad(
+                payload_img.convert("RGB"),
+                (print_label_width, print_label_height),
+                method=Image.Resampling.LANCZOS,
+                color=(255, 255, 255),
+                centering=(0.5, 0.5),
+            )
+            fitted_buffer = BytesIO()
+            fitted.save(fitted_buffer, format="PNG")
+            print_buffer = fitted_buffer.getvalue()
+    except Exception as fit_exc:
+        logger.warning("Print canvas fit failed; using current dimensions | error=%s", fit_exc)
+
     image_base64 = base64.b64encode(print_buffer).decode()
     print_payload = {
         "imageBase64": image_base64,
         "labelWidth": print_label_width,
         "labelHeight": print_label_height,
-        "printTask": os.getenv("NIIMBOT_PRINT_TASK", "B1"),
-        "printDirection": "top",
+        "printTask": _resolve_print_task(),
+        "printDirection": os.getenv("NIIMBOT_PRINT_DIRECTION", "top"),
+        "imageFit": os.getenv("NIIMBOT_IMAGE_FIT", "contain"),
+        "imagePosition": os.getenv("NIIMBOT_IMAGE_POSITION", "centre"),
         "quantity": 1,
     }
 

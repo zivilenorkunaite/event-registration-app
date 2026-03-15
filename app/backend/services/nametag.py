@@ -65,8 +65,6 @@ def _clamp(value: int, minimum: int, maximum: int) -> int:
 # Label dimensions are env-driven and converted to printer-safe pixels.
 # Defaults target B3S_P real label: 70mm x 40mm.
 _DPI = 203
-_MAX_B3S_WIDTH_PX = 576
-_MAX_B3S_HEIGHT_PX = 400
 
 LABEL_WIDTH_MM = _safe_float(os.getenv("NIIMBOT_LABEL_WIDTH_MM"), 70.0)
 LABEL_HEIGHT_MM = _safe_float(os.getenv("NIIMBOT_LABEL_HEIGHT_MM"), 40.0)
@@ -74,8 +72,8 @@ LABEL_HEIGHT_MM = _safe_float(os.getenv("NIIMBOT_LABEL_HEIGHT_MM"), 40.0)
 _width_px_raw = _mm_to_px(LABEL_WIDTH_MM, _DPI)
 _height_px_raw = _mm_to_px(LABEL_HEIGHT_MM, _DPI)
 
-LABEL_WIDTH_PX = _align_to_multiple_of_8(_clamp(_width_px_raw, 8, _MAX_B3S_WIDTH_PX))
-LABEL_HEIGHT_PX = _align_to_multiple_of_8(_clamp(_height_px_raw, 8, _MAX_B3S_HEIGHT_PX))
+LABEL_WIDTH_PX = _align_to_multiple_of_8(max(8, _width_px_raw))
+LABEL_HEIGHT_PX = _align_to_multiple_of_8(max(8, _height_px_raw))
 
 
 def _measure_text(font: ImageFont.FreeTypeFont, text: str) -> tuple[int, int]:

@@ -24,7 +24,13 @@ from dotenv import load_dotenv
 from PIL import Image
 
 from backend import db
-from backend.services.nametag import generate_nametag_image, LABEL_WIDTH_PX, LABEL_HEIGHT_PX
+from backend.services.nametag import (
+    generate_nametag_image,
+    LABEL_WIDTH_MM,
+    LABEL_HEIGHT_MM,
+    LABEL_WIDTH_PX,
+    LABEL_HEIGHT_PX,
+)
 
 
 logging.basicConfig(
@@ -614,20 +620,23 @@ def _build_nametag_artifacts(
     )
 
     print_buffer = image_buffer
-    print_label_width = LABEL_WIDTH_PX
-    print_label_height = LABEL_HEIGHT_PX
 
-    if LABEL_HEIGHT_PX > LABEL_WIDTH_PX:
+    if LABEL_HEIGHT_MM > LABEL_WIDTH_MM:
         try:
             with Image.open(BytesIO(image_buffer)) as portrait_img:
                 rotated = portrait_img.rotate(-90, expand=True)
                 rotated_buffer = BytesIO()
                 rotated.save(rotated_buffer, format="PNG")
                 print_buffer = rotated_buffer.getvalue()
-                print_label_width = LABEL_HEIGHT_PX
-                print_label_height = LABEL_WIDTH_PX
         except Exception as rotate_exc:
             logger.warning("Portrait rotation failed; using original orientation | error=%s", rotate_exc)
+
+    try:
+        with Image.open(BytesIO(print_buffer)) as payload_img:
+            print_label_width, print_label_height = payload_img.size
+    except Exception:
+        print_label_width = LABEL_WIDTH_PX
+        print_label_height = LABEL_HEIGHT_PX
 
     image_base64 = base64.b64encode(print_buffer).decode()
     print_payload = {

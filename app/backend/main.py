@@ -72,29 +72,12 @@ NIIMBOT_SERVER_URL = os.getenv("NIIMBOT_SERVER_URL", "").rstrip("/")
 EVENT_NAME = os.getenv("EVENT_NAME", "Energy & Utilities Connect Sydney")
 EVENT_LOCATION = os.getenv("EVENT_LOCATION", "Sydney")
 IS_DATABRICKS_APP = bool(os.getenv("DATABRICKS_APP_NAME"))
-DATABRICKS_VOLUME_PATH = os.getenv("DATABRICKS_VOLUME_PATH", "").strip()
+NAMETAG_TEMPLATE_VERSION = (os.getenv("NAMETAG_TEMPLATE_VERSION") or "2026-03-15").strip()
 
 
 def _resolve_print_task() -> str:
     """Resolve printer task from environment configuration."""
     return (os.getenv("NIIMBOT_PRINT_TASK") or "B1").strip()
-
-
-def _resolve_volume_images_dir(volume_value: str) -> Optional[Path]:
-    """Resolve Databricks volume env value to a writable mounted images directory path."""
-    raw_value = (volume_value or "").strip()
-    if not raw_value:
-        return None
-
-    if raw_value.startswith("/Volumes/"):
-        base_path = Path(raw_value)
-    else:
-        parts = raw_value.split(".")
-        if len(parts) != 3 or not all(parts):
-            return None
-        base_path = Path("/Volumes") / parts[0] / parts[1] / parts[2]
-
-    return base_path / "images"
 
 
 @asynccontextmanager
@@ -155,32 +138,9 @@ else:
     logger.warning("Frontend directory not found | candidates=%s", root_candidates)
 
 
-_fallback_images_dir = Path(app_dir) / "data" / "images"
-
-if IS_DATABRICKS_APP and DATABRICKS_VOLUME_PATH:
-    _candidate_images_dir = _resolve_volume_images_dir(DATABRICKS_VOLUME_PATH)
-    try:
-        if _candidate_images_dir is None:
-            raise ValueError(
-                "DATABRICKS_VOLUME_PATH must be '/Volumes/<catalog>/<schema>/<volume>' "
-                "or '<catalog>.<schema>.<volume>'"
-            )
-        _candidate_images_dir.mkdir(parents=True, exist_ok=True)
-        IMAGES_DIR = _candidate_images_dir
-        logger.info("Image storage directory configured | target=volume | path=%s", str(IMAGES_DIR))
-    except Exception as volume_exc:
-        _fallback_images_dir.mkdir(parents=True, exist_ok=True)
-        IMAGES_DIR = _fallback_images_dir
-        logger.warning(
-            "Volume image path unavailable; using local fallback | volume_path=%s | fallback=%s | error=%s",
-            DATABRICKS_VOLUME_PATH,
-            str(IMAGES_DIR),
-            volume_exc,
-        )
-else:
-    _fallback_images_dir.mkdir(parents=True, exist_ok=True)
-    IMAGES_DIR = _fallback_images_dir
-    logger.info("Image storage directory configured | target=local | path=%s", str(IMAGES_DIR))
+IMAGES_DIR = Path(app_dir) / "data" / "images"
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+logger.info("Image storage directory configured | target=local | path=%s", str(IMAGES_DIR))
 
 LOCAL_REGISTRATIONS_FILE = Path(app_dir) / "data" / "registrations.json"
 LOCAL_PRINT_JOBS_FILE = Path(app_dir) / "data" / "print_jobs.json"
@@ -610,7 +570,7 @@ def _build_nametag_artifacts(
     """Generate image, optionally save locally, and prepare the print payload."""
     name_display = unicodedata.normalize("NFC", first_name.strip()).upper()
 
-    image_buffer = generate_nametag_image(
+    render_buffer = generate_nametag_image(
         {
             "name": name_display,
             "company": company_val,
@@ -621,34 +581,21 @@ def _build_nametag_artifacts(
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     safe_name = name_display.replace(" ", "_")
+    image_id = (
+        registration_id
+        if registration_id is not None
+        else int(datetime.now(timezone.utc).timestamp() * 1000)
+    )
+    png_filename = f"{image_id}_nametag_{safe_name}_{timestamp}.png"
 
-    if IS_DATABRICKS_APP:
-        image_id = (
-            registration_id
-            if registration_id is not None
-            else int(datetime.now(timezone.utc).timestamp() * 1000)
-        )
-        png_filename = f"{image_id}_nametag_{safe_name}_{timestamp}.png"
-        saved_path = None
-        logger.info(
-            "Skipping nametag image file save | mode=databricks_app | registration_id=%s",
-            registration_id,
-        )
-    else:
-        image_id, png_filename, saved_path = _save_nametag_image(
-            image_buffer,
-            name_display,
-            registration_id=registration_id,
-        )
-
-    print_buffer = image_buffer
+    print_buffer = render_buffer
 
     rotate_portrait_raw = (os.getenv("NIIMBOT_ROTATE_PORTRAIT") or "true").strip().lower()
     rotate_portrait = rotate_portrait_raw in {"1", "true", "yes", "on"}
 
     if rotate_portrait and LABEL_HEIGHT_MM > LABEL_WIDTH_MM:
         try:
-            with Image.open(BytesIO(image_buffer)) as portrait_img:
+            with Image.open(BytesIO(render_buffer)) as portrait_img:
                 rotated = portrait_img.rotate(-90, expand=True)
 
                 rotated_x_offset_raw = (os.getenv("NIIMBOT_ROTATED_X_OFFSET_PX") or "0").strip()
@@ -696,6 +643,19 @@ def _build_nametag_artifacts(
     except Exception as fit_exc:
         logger.warning("Print canvas fit failed; using current dimensions | error=%s", fit_exc)
 
+    if IS_DATABRICKS_APP:
+        saved_path = None
+        logger.info(
+            "Skipping nametag image file save | mode=databricks_app | registration_id=%s",
+            registration_id,
+        )
+    else:
+        _, png_filename, saved_path = _save_nametag_image(
+            print_buffer,
+            name_display,
+            registration_id=image_id,
+        )
+
     image_base64 = base64.b64encode(print_buffer).decode()
     print_payload = {
         "imageBase64": image_base64,
@@ -705,6 +665,7 @@ def _build_nametag_artifacts(
         "printDirection": os.getenv("NIIMBOT_PRINT_DIRECTION", "top"),
         "imageFit": os.getenv("NIIMBOT_IMAGE_FIT", "contain"),
         "imagePosition": os.getenv("NIIMBOT_IMAGE_POSITION", "centre"),
+        "templateVersion": NAMETAG_TEMPLATE_VERSION,
         "quantity": 1,
     }
 

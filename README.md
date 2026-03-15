@@ -122,6 +122,14 @@ pip install -r requirements.txt
 python local_agent.py
 ```
 
+### Run printer + local agent together
+
+```bash
+bash scripts/start_local_agent_with_printer.sh
+```
+
+This starts the local `niimblue` bridge (if needed), connects the printer, and then runs `local_agent/local_agent.py`.
+
 ### Run local agent UI
 
 ```bash

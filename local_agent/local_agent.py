@@ -109,6 +109,7 @@ class AgentConfig:
     claim_ttl_seconds: int
     max_retry_backoff_seconds: int
     default_max_attempts: int
+    required_template_version: str
 
     niimbot_server_url: str
     niimbot_transport: str
@@ -186,6 +187,10 @@ def load_config() -> AgentConfig:
             10, _env_int("LOCAL_AGENT_MAX_RETRY_BACKOFF_SECONDS", 120)
         ),
         default_max_attempts=max(1, _env_int("LOCAL_AGENT_DEFAULT_MAX_ATTEMPTS", 5)),
+        required_template_version=(
+            os.getenv("LOCAL_AGENT_REQUIRED_TEMPLATE_VERSION", "").strip()
+            or os.getenv("NAMETAG_TEMPLATE_VERSION", "").strip()
+        ),
         niimbot_server_url=os.getenv("NIIMBOT_SERVER_URL", "http://localhost:5050").rstrip("/"),
         niimbot_transport=os.getenv("NIIMBOT_TRANSPORT", "ble").strip(),
         niimbot_address=os.getenv("NIIMBOT_ADDRESS", "").strip(),
@@ -629,7 +634,8 @@ def mark_printed(conn, cfg: AgentConfig, job: ClaimedJob) -> None:
 
 def mark_failed(conn, cfg: AgentConfig, job: ClaimedJob, error_message: str) -> None:
     next_attempt = job.attempt_count + 1
-    exhausted = next_attempt >= max(1, job.max_attempts)
+    template_mismatch = "Template version mismatch" in (error_message or "")
+    exhausted = template_mismatch or next_attempt >= max(1, job.max_attempts)
 
     base_backoff = min(cfg.max_retry_backoff_seconds, 2 ** max(0, job.attempt_count))
     backoff_seconds = max(cfg.poll_seconds, base_backoff)
@@ -742,6 +748,19 @@ def _resolve_print_payload(
 
     image_base64 = print_request.get("imageBase64")
     image_url = print_request.get("imageUrl")
+
+    required_template_version = (cfg.required_template_version or "").strip()
+    actual_template_version = str(
+        print_request.get("templateVersion")
+        or payload.get("templateVersion")
+        or ""
+    ).strip()
+    if required_template_version and actual_template_version != required_template_version:
+        raise RuntimeError(
+            "Template version mismatch: "
+            f"expected={required_template_version} "
+            f"actual={actual_template_version or '<missing>'}"
+        )
 
     if not image_base64 and image_url:
         image_response = client.get(str(image_url))

@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import time
+import unicodedata
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -552,7 +553,7 @@ async def _enqueue_print_job(
 
 def _find_latest_nametag_for_first_name(first_name: str) -> Optional[str]:
     """Best-effort match: latest nametag image for first name based on filename."""
-    safe_name = (first_name or "").strip().upper().replace(" ", "_")
+    safe_name = unicodedata.normalize("NFC", (first_name or "").strip()).upper().replace(" ", "_")
     if not safe_name:
         return None
 
@@ -607,7 +608,7 @@ def _build_nametag_artifacts(
     registration_id: Optional[int],
 ) -> dict:
     """Generate image, save it, and prepare the print payload."""
-    name_display = first_name.strip().upper()
+    name_display = unicodedata.normalize("NFC", first_name.strip()).upper()
 
     image_buffer = generate_nametag_image(
         {

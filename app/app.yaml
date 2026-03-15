@@ -27,3 +27,19 @@ env:
     value: 'main.default.event_registrations'
   - name: PORT
     value: "8000"
+  - name: NIIMBOT_LABEL_WIDTH_MM
+    value: "50"
+  - name: NIIMBOT_LABEL_HEIGHT_MM
+    value: "80"
+  - name: NIIMBOT_ROTATE_TEXT_90
+    value: "true"
+  - name: NIIMBOT_ROTATE_PORTRAIT
+    value: "false"
+  - name: NIIMBOT_PRINT_TASK
+    value: "B1"
+  - name: NIIMBOT_PRINT_DIRECTION
+    value: "top"
+  - name: NIIMBOT_IMAGE_FIT
+    value: "contain"
+  - name: NIIMBOT_IMAGE_POSITION
+    value: "centre"

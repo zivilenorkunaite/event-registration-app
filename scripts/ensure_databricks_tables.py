@@ -136,7 +136,8 @@ async def main() -> int:
             f"""
             CREATE TABLE IF NOT EXISTS {registrations_table}
             (
-                id BIGINT,
+                id BIGINT GENERATED ALWAYS AS IDENTITY,
+                registration_id BIGINT,
                 first_name STRING NOT NULL,
                 last_name STRING NOT NULL,
                 company STRING,
@@ -152,6 +153,7 @@ async def main() -> int:
             registrations_table,
             {
                 "id": "BIGINT",
+                "registration_id": "BIGINT",
                 "first_name": "STRING",
                 "last_name": "STRING",
                 "company": "STRING",

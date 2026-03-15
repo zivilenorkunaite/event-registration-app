@@ -607,7 +607,7 @@ def _build_nametag_artifacts(
     location: str,
     registration_id: Optional[int],
 ) -> dict:
-    """Generate image, save it, and prepare the print payload."""
+    """Generate image, optionally save locally, and prepare the print payload."""
     name_display = unicodedata.normalize("NFC", first_name.strip()).upper()
 
     image_buffer = generate_nametag_image(
@@ -619,11 +619,27 @@ def _build_nametag_artifacts(
         }
     )
 
-    image_id, png_filename, saved_path = _save_nametag_image(
-        image_buffer,
-        name_display,
-        registration_id=registration_id,
-    )
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    safe_name = name_display.replace(" ", "_")
+
+    if IS_DATABRICKS_APP:
+        image_id = (
+            registration_id
+            if registration_id is not None
+            else int(datetime.now(timezone.utc).timestamp() * 1000)
+        )
+        png_filename = f"{image_id}_nametag_{safe_name}_{timestamp}.png"
+        saved_path = None
+        logger.info(
+            "Skipping nametag image file save | mode=databricks_app | registration_id=%s",
+            registration_id,
+        )
+    else:
+        image_id, png_filename, saved_path = _save_nametag_image(
+            image_buffer,
+            name_display,
+            registration_id=registration_id,
+        )
 
     print_buffer = image_buffer
 
@@ -775,9 +791,9 @@ async def _dispatch_nametag(
             printer_message = printer["reason"]
 
     message = (
-        "Name tag saved and queued for agent processing."
+        "Name tag queued for agent processing."
         if IS_DATABRICKS_APP and queue_job_id
-        else "Name tag saved, but queueing failed."
+        else "Name tag generated, but queueing failed."
         if IS_DATABRICKS_APP
         else "Name tag saved and sent to printer successfully."
         if printed

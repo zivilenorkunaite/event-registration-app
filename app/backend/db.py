@@ -38,6 +38,11 @@ _REGISTRATION_ID_WORKER_ID = uuid.uuid4().int & 0x3FF
 _REGISTRATION_ID_LOCK = threading.Lock()
 _REGISTRATION_ID_LAST_MS = -1
 _REGISTRATION_ID_COUNTER = 0
+_OAUTH_TOKEN_CACHE: Optional[str] = None
+_OAUTH_TOKEN_CACHE_EXPIRES_AT = 0.0
+_OAUTH_TOKEN_LOCK = threading.Lock()
+_REGISTRATION_ID_COLUMN_READY = False
+_REGISTRATION_ID_COLUMN_LOCK = threading.Lock()
 
 
 def _is_databricks_app() -> bool:
@@ -78,7 +83,7 @@ def _normalize_server_hostname(host: str) -> str:
     return normalized
 
 
-async def _fetch_oauth_m2m_access_token(server_hostname: str, client_id: str, client_secret: str) -> str:
+async def _fetch_oauth_m2m_access_token(server_hostname: str, client_id: str, client_secret: str) -> tuple[str, float]:
     """Fetch access token via OAuth client credentials against workspace OIDC endpoint."""
     token_url = f"https://{server_hostname}/oidc/v1/token"
     payload = {
@@ -95,7 +100,33 @@ async def _fetch_oauth_m2m_access_token(server_hostname: str, client_id: str, cl
         access_token = token_data.get("access_token")
         if not access_token:
             raise RuntimeError("OAuth token response missing access_token")
-        return str(access_token)
+        expires_in_raw = token_data.get("expires_in", 3600)
+        try:
+            expires_in = int(expires_in_raw)
+        except (TypeError, ValueError):
+            expires_in = 3600
+
+        refresh_skew_seconds = 60
+        expires_at = time.time() + max(60, expires_in - refresh_skew_seconds)
+        return str(access_token), expires_at
+
+
+async def _get_oauth_m2m_access_token_cached(server_hostname: str, client_id: str, client_secret: str) -> str:
+    """Return cached OAuth token when valid; otherwise fetch and cache a fresh token."""
+    global _OAUTH_TOKEN_CACHE, _OAUTH_TOKEN_CACHE_EXPIRES_AT
+
+    now = time.time()
+    with _OAUTH_TOKEN_LOCK:
+        if _OAUTH_TOKEN_CACHE and now < _OAUTH_TOKEN_CACHE_EXPIRES_AT:
+            return _OAUTH_TOKEN_CACHE
+
+    token, expires_at = await _fetch_oauth_m2m_access_token(server_hostname, client_id, client_secret)
+
+    with _OAUTH_TOKEN_LOCK:
+        _OAUTH_TOKEN_CACHE = token
+        _OAUTH_TOKEN_CACHE_EXPIRES_AT = expires_at
+
+    return token
 
 
 def _load_registrations() -> List[Dict[str, Any]]:
@@ -170,7 +201,7 @@ async def _build_connection_kwargs() -> Dict[str, Any]:
 
     if not access_token and client_id and client_secret:
         logger.info("Fetching OAuth M2M access token for Databricks SQL")
-        access_token = await _fetch_oauth_m2m_access_token(server_hostname, client_id, client_secret)
+        access_token = await _get_oauth_m2m_access_token_cached(server_hostname, client_id, client_secret)
 
     if access_token:
         logger.info("Using access token authentication for Databricks SQL")
@@ -342,6 +373,31 @@ async def execute_query_isolated(query: str, params: List[Any] = None) -> List[t
     return await asyncio.to_thread(_execute)
 
 
+async def _ensure_registration_id_column() -> None:
+    """Best-effort one-time migration to ensure registration_id column exists."""
+    global _REGISTRATION_ID_COLUMN_READY
+
+    if _REGISTRATION_ID_COLUMN_READY:
+        return
+
+    with _REGISTRATION_ID_COLUMN_LOCK:
+        if _REGISTRATION_ID_COLUMN_READY:
+            return
+
+    try:
+        await execute_query(
+            f"ALTER TABLE {REGISTRATIONS_TABLE} ADD COLUMNS (registration_id BIGINT)"
+        )
+        logger.info("Ensured registration_id column exists | table=%s", REGISTRATIONS_TABLE)
+    except Exception as exc:
+        message = str(exc).lower()
+        if "already exists" not in message and "duplicate" not in message:
+            logger.warning("registration_id column ensure skipped | error=%s", exc)
+    finally:
+        with _REGISTRATION_ID_COLUMN_LOCK:
+            _REGISTRATION_ID_COLUMN_READY = True
+
+
 async def save_registration(
     first_name: str, 
     last_name: str, 
@@ -359,10 +415,11 @@ async def save_registration(
             # Use file storage
             registrations = await asyncio.to_thread(_load_registrations)
 
-            next_id = registration_id if registration_id is not None else _generate_registration_id()
+            generated_registration_id = registration_id if registration_id is not None else _generate_registration_id()
 
             registrations.append({
-                "id": next_id,
+                "id": generated_registration_id,
+                "registration_id": generated_registration_id,
                 "first_name": first_name,
                 "last_name": last_name,
                 "company": company,
@@ -371,19 +428,20 @@ async def save_registration(
                 "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             })
             await asyncio.to_thread(_save_registrations, registrations)
-            logger.info("Saved registration to file storage | id=%s", next_id)
-            return next_id
-        
-        registration_id = registration_id if registration_id is not None else _generate_registration_id()
+            logger.info("Saved registration to file storage | registration_id=%s", generated_registration_id)
+            return generated_registration_id
+
+        generated_registration_id = registration_id if registration_id is not None else _generate_registration_id()
+        await _ensure_registration_id_column()
 
         await execute_query(
             f"""
             INSERT INTO {REGISTRATIONS_TABLE}
-            (id, first_name, last_name, company, company_email, contact_permission)
+            (registration_id, first_name, last_name, company, company_email, contact_permission)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
             [
-                registration_id,
+                generated_registration_id,
                 first_name,
                 last_name,
                 company,
@@ -391,8 +449,8 @@ async def save_registration(
                 contact_permission,
             ],
         )
-        logger.info("Saved registration to Databricks table | id=%s", registration_id)
-        return registration_id
+        logger.info("Saved registration to Databricks table | registration_id=%s", generated_registration_id)
+        return generated_registration_id
     except Exception as e:
         logger.exception("save_registration failed | error=%s", e)
         raise
@@ -409,17 +467,25 @@ async def delete_registration(registration_id: int) -> None:
             filtered = [
                 registration
                 for registration in registrations
-                if str(registration.get("id")) != str(registration_id)
+                if str(registration.get("registration_id") or registration.get("id")) != str(registration_id)
             ]
             if len(filtered) != len(registrations):
                 await asyncio.to_thread(_save_registrations, filtered)
                 logger.info("Deleted registration from file storage | id=%s", registration_id)
             return
 
-        await execute_query(
-            f"DELETE FROM {REGISTRATIONS_TABLE} WHERE id = ?",
-            [registration_id],
-        )
+        try:
+            await execute_query(
+                f"DELETE FROM {REGISTRATIONS_TABLE} WHERE registration_id = ? OR id = ?",
+                [registration_id, registration_id],
+            )
+        except Exception as exc:
+            if "registration_id" not in str(exc).lower():
+                raise
+            await execute_query(
+                f"DELETE FROM {REGISTRATIONS_TABLE} WHERE id = ?",
+                [registration_id],
+            )
         logger.info("Deleted registration from Databricks table | id=%s", registration_id)
     except Exception as e:
         logger.exception("delete_registration failed | id=%s | error=%s", registration_id, e)
@@ -435,6 +501,9 @@ async def get_registrations(limit: Optional[int] = None) -> List[Dict[str, Any]]
         if _use_file_storage:
             # Use file storage
             registrations = await asyncio.to_thread(_load_registrations)
+            for registration in registrations:
+                if registration.get("registration_id") is None:
+                    registration["registration_id"] = registration.get("id")
             # Sort by created_at descending
             registrations.sort(key=lambda r: r.get("created_at", 0), reverse=True)
             if limit:
@@ -442,14 +511,32 @@ async def get_registrations(limit: Optional[int] = None) -> List[Dict[str, Any]]
             logger.info("Fetched registrations from file storage | count=%s | limit=%s", len(registrations), limit)
             return registrations
         
-        query = f"SELECT id, first_name, last_name, company, company_email, contact_permission, created_at FROM {REGISTRATIONS_TABLE} ORDER BY created_at DESC"
+        query = (
+            f"SELECT id, COALESCE(registration_id, id) AS registration_id, first_name, last_name, "
+            f"company, company_email, contact_permission, created_at FROM {REGISTRATIONS_TABLE} ORDER BY created_at DESC"
+        )
         if limit:
             query += f" LIMIT {limit}"
-        
-        rows = await execute_query(query)
+
+        try:
+            rows = await execute_query(query)
+        except Exception as exc:
+            if "registration_id" not in str(exc).lower():
+                raise
+            fallback_query = (
+                f"SELECT id, first_name, last_name, company, company_email, contact_permission, created_at "
+                f"FROM {REGISTRATIONS_TABLE} ORDER BY created_at DESC"
+            )
+            if limit:
+                fallback_query += f" LIMIT {limit}"
+            fallback_rows = await execute_query(fallback_query)
+            rows = [
+                (row[0], row[0], row[1], row[2], row[3], row[4], row[5], row[6])
+                for row in fallback_rows
+            ]
         
         # Convert tuples to dicts
-        columns = ["id", "first_name", "last_name", "company", "company_email", "contact_permission", "created_at"]
+        columns = ["id", "registration_id", "first_name", "last_name", "company", "company_email", "contact_permission", "created_at"]
         logger.info("Fetched registrations from Databricks | count=%s | limit=%s", len(rows), limit)
         return [dict(zip(columns, row)) for row in rows]
     except Exception as e:

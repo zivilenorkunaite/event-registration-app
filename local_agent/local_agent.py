@@ -7,11 +7,13 @@ sends it to a local Niimbot print bridge, and updates job status.
 
 from __future__ import annotations
 
+import configparser
 import base64
 import contextlib
 import json
 import logging
 import os
+import re
 import socket
 import time
 import uuid
@@ -40,6 +42,53 @@ def _env_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _normalize_server_hostname(host: str) -> str:
+    normalized = (host or "").strip()
+    normalized = re.sub(r"^https?://", "", normalized)
+    normalized = normalized.split("/", 1)[0]
+    return normalized
+
+
+def _extract_warehouse_id(http_path: str) -> str:
+    raw = (http_path or "").strip()
+    if not raw:
+        return ""
+    match = re.search(r"/sql/1\.0/warehouses/([^/?#]+)", raw)
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+
+def _load_databricks_profile(profile_name: str) -> dict[str, str]:
+    config_path = os.getenv("DATABRICKS_CONFIG_FILE", "~/.databrickscfg")
+    resolved_path = Path(config_path).expanduser()
+    if not resolved_path.exists():
+        return {}
+
+    parser = configparser.ConfigParser()
+    parser.read(resolved_path)
+
+    section_name = (profile_name or "DEFAULT").strip() or "DEFAULT"
+    if section_name not in parser:
+        return {}
+
+    section = parser[section_name]
+    host = _normalize_server_hostname(section.get("host", ""))
+    warehouse_id = (
+        section.get("warehouse_id", "").strip()
+        or section.get("sql_warehouse_id", "").strip()
+        or _extract_warehouse_id(section.get("http_path", ""))
+    )
+
+    return {
+        "host": host,
+        "warehouse_id": warehouse_id,
+        "token": section.get("token", "").strip(),
+        "client_id": section.get("client_id", "").strip(),
+        "client_secret": section.get("client_secret", "").strip(),
+    }
 
 
 @dataclass
@@ -84,11 +133,26 @@ def load_config() -> AgentConfig:
     repo_root = Path(__file__).resolve().parents[1]
     load_dotenv(repo_root / ".env")
 
-    host = os.getenv("DATABRICKS_HOST", "").strip()
+    profile_name = os.getenv("DATABRICKS_CONFIG_PROFILE", "DEFAULT").strip() or "DEFAULT"
+    profile_values = _load_databricks_profile(profile_name)
+
+    host = _normalize_server_hostname(os.getenv("DATABRICKS_HOST", "").strip())
     warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID", "").strip()
     client_id = os.getenv("DATABRICKS_CLIENT_ID", "").strip()
     client_secret = os.getenv("DATABRICKS_CLIENT_SECRET", "").strip()
     token = os.getenv("DATABRICKS_TOKEN", "").strip()
+
+    if not host:
+        host = profile_values.get("host", "")
+    if not warehouse_id:
+        warehouse_id = profile_values.get("warehouse_id", "")
+    if not token:
+        token = profile_values.get("token", "")
+    if not client_id:
+        client_id = profile_values.get("client_id", "")
+    if not client_secret:
+        client_secret = profile_values.get("client_secret", "")
+
     local_run = _env_bool("LOCAL_AGENT_LOCAL_RUN", False)
     local_queue_file = os.getenv(
         "LOCAL_AGENT_LOCAL_QUEUE_FILE",

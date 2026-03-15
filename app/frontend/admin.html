@@ -514,7 +514,7 @@
           company: attendee.company || "",
           groupName: eventName || undefined,
           location: eventLocation || undefined,
-          registrationId: attendee.id ?? null,
+          registrationId: attendee.registration_id ?? attendee.id ?? null,
         };
 
         try {

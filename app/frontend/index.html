@@ -667,9 +667,8 @@
             status?.printingEnabled === false ||
             status?.mode === "databricks_app"
           ) {
-            printerStatusFooter.textContent =
-              "Managed mode — check-in, image save, and queueing are active.";
-            printerStatusFooter.className = "printer-status-footer online";
+            printerStatusFooter.textContent = "";
+            printerStatusFooter.className = "printer-status-footer";
             return;
           }
 
@@ -705,9 +704,8 @@
             previewEventLocation.textContent = config.eventLocation;
           }
           if (isDatabricksApp) {
-            printerStatusFooter.textContent =
-              "Managed mode — check-in, image save, and queueing are active.";
-            printerStatusFooter.className = "printer-status-footer online";
+            printerStatusFooter.textContent = "";
+            printerStatusFooter.className = "printer-status-footer";
           }
           const name = config?.eventName || previewEventName.textContent;
           const loc = config?.eventLocation || previewEventLocation.textContent;

@@ -12,14 +12,20 @@ load_dotenv()
 
 _FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
 _BUNDLED_FONT_PATHS = {
-    "regular": [os.path.join(_FONT_DIR, "Inter-Regular.ttf")],
+    "regular": [
+        os.path.join(_FONT_DIR, "DMSans-Variable.ttf"),
+        os.path.join(_FONT_DIR, "Inter-Regular.ttf"),
+    ],
     "bold": [
+        os.path.join(_FONT_DIR, "DMSans-Variable.ttf"),
         os.path.join(_FONT_DIR, "Inter-Bold.ttf"),
         os.path.join(_FONT_DIR, "Inter-Regular.ttf"),
     ],
 }
 _SYSTEM_FONT_PATHS = {
     "regular": [
+        "/System/Library/Fonts/Supplemental/Arial.ttf",  # macOS
+        "/Library/Fonts/Arial.ttf",  # macOS user-installed
         "/System/Library/Fonts/Supplemental/Verdana.ttf",  # macOS
         "/Windows/Fonts/verdana.ttf",  # Windows
         "/System/Library/Fonts/Helvetica.ttc",  # macOS
@@ -28,6 +34,8 @@ _SYSTEM_FONT_PATHS = {
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",  # Linux alternative
     ],
     "bold": [
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",  # macOS
+        "/Library/Fonts/Arial Bold.ttf",  # macOS user-installed
         "/System/Library/Fonts/Supplemental/Verdana Bold.ttf",  # macOS
         "/Windows/Fonts/verdanab.ttf",  # Windows
         "/System/Library/Fonts/Helvetica.ttc",  # macOS
@@ -87,7 +95,7 @@ def _measure_text(font: ImageFont.FreeTypeFont, text: str) -> tuple[int, int]:
 
 
 def get_font(size: int, weight: str = "regular") -> ImageFont.FreeTypeFont:
-    """Get a font of specified size and weight, preferring Verdana when available."""
+    """Get a font of specified size and weight, preferring Arial when available."""
     try:
         normalized_weight = "bold" if weight == "bold" else "regular"
         font_paths = (

@@ -17,7 +17,7 @@ def main() -> None:
 
     raw = generate_nametag_image(
         {
-            'name': 'ZIVILE',
+            'name': 'ŻIVILĖ',
             'company': 'DATABRICKS',
             'groupName': 'Energy & Utilities Data Connect',
             'location': 'Sydney',
@@ -32,7 +32,7 @@ def main() -> None:
         im.rotate(90, expand=True).save(out / 'debug_rotated_ccw_target.png', format='PNG')
 
     artifacts = _build_nametag_artifacts(
-        first_name='ZIVILE',
+        first_name='ŻIVILĖ',
         company_val='DATABRICKS',
         group='Energy & Utilities Data Connect',
         location='Sydney',
